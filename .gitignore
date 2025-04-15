@@ -1,0 +1,5 @@
+.vscode/
+build
+*.dol
+*.elf
+*.zip

@@ -1,0 +1,22 @@
+.macro syscall num
+	.long 0xE6000010 | (\num << 5)
+.endm
+
+.arm
+start:
+	mov r0, #0x0D800000	@ first order of business: AHB access for thy power PC
+	ldr r1, [r0, #0x60]
+	orr r1, #0x8
+	str r1, [r0, #0x60]
+
+	ldr r1, [r0, #0x64]
+	orr r1, #0x8000000E
+	orr r1, #0x00000DF0
+	str r1, [r0, #0x64]
+
+	@ also, set our UID to 0
+	mov r0, #0xF
+	mov r1, #0x0
+	syscall 0x2B @ SetUid
+
+	bx lr
