@@ -12,6 +12,7 @@
 #include "common.h"
 #include "video.h"
 #include "pad.h"
+#include "fatMounter.h"
 #include "sha.h"
 #include "otp.h"
 #include "mini_seeprom.h"
@@ -37,7 +38,7 @@ typedef struct FlashComandLog {
 	int error_over_idx, error_idx;
 	FlashErrorLog errors[32];
 } FlashComandLog;
-_Static_assert(sizeof(FlashComandLog) == 0x198, "FlashComandLog");
+CHECK_STRUCT_SIZE(FlashComandLog, 0x198);
 
 typedef struct FlashSizeInfo {
 	// log2
@@ -45,7 +46,7 @@ typedef struct FlashSizeInfo {
 	short check_byte_ofs;
 	short padding;
 } FlashSizeInfo;
-_Static_assert(sizeof(FlashSizeInfo) == 0x1C, "FlashSizeInfo");
+CHECK_STRUCT_SIZE(FlashSizeInfo, 0x1C);
 
 typedef struct KeysBin {
 	char		comment[256];
@@ -54,12 +55,12 @@ typedef struct KeysBin {
 	seeprom_t	seeprom;
 	char		padding2[256];
 } KeysBin;
-_Static_assert(sizeof(KeysBin) == 0x400, "KeysBin");
+CHECK_STRUCT_SIZE(KeysBin, 0x400);
 
 // thank you mkwcat (<3)
 int do_the_haxx(void) {
-	IOS_ReloadIOS(21);
-	// IOS_ReloadIOS(*IOSVersion);
+	// IOS_ReloadIOS(9);
+	IOS_ReloadIOS(*IOSVersion);
 	usleep(100000);
 
 	uint32_t* mem1 = (uint32_t *)0x80000000;
@@ -116,7 +117,7 @@ int patch_flash_access(void) {
 	uint16_t* FS_OpenInterface = NULL;
 	uint16_t* pc = memmem(mem2_ptr_cur, mem2_ptr_end - mem2_ptr_cur, patternA, sizeof patternA);
 	if (!pc) {
-		puts("I guess this is IOS <40?");
+		puts("I guess this is IOS 3x?");
 		pc = memmem(mem2_ptr_cur, mem2_ptr_end - mem2_ptr_cur, patternB, sizeof patternB);
 		if (!pc) {
 			puts("Still could not find stubbed /dev/flash check");
@@ -205,8 +206,8 @@ int do_nand_backup(const char* nand_path, const char* keys_path, const char comm
 		vwii_sram_otp_t sram_otp = {};
 		vwii_sram_otp_read(&sram_otp, 0, SRAM_OTP_SIZE);
 
-#if 1
-		printf("* from the SRAM OTP: Root-%08x-%08x\n", sram_otp.ca_id, sram_otp.ms_id);
+#if 0
+		printf("* from the SRAM OTP: Root-CA%08x-MS%08x\n", sram_otp.ca_id, sram_otp.ms_id);
 #endif
 
 		keys.seeprom.ms_id = sram_otp.ms_id;
@@ -231,7 +232,7 @@ int do_nand_backup(const char* nand_path, const char* keys_path, const char comm
 		return -errno;
 	}
 
-	fd = ret = IOS_Open("/dev/boot2", 0);
+	fd = ret = IOS_Open("/dev/boot2", 0); // Pay attention to how the patch works.
 	if (ret < 0) {
 		print_error("IOS_Open(/dev/flash)", ret);
 		return ret;
@@ -275,6 +276,7 @@ int do_nand_backup(const char* nand_path, const char* keys_path, const char comm
 	uint64_t start = gettime();
 	for (unsigned int i = 0; i < n_blocks; i++) {
 		unsigned char *ptr_block = buffer + ((i & buffer_cnt_mask) * block_spare_sz);
+		bool is_bad = false;
 
 		printf("\rBlock progress: %i/%i // %.3fs  ", i + 1, n_blocks, diff_msec(start, gettime()) / 1000.f);
 
@@ -288,14 +290,15 @@ int do_nand_backup(const char* nand_path, const char* keys_path, const char comm
 				printf("check block %u => %i\n", i, ret);
 			}
 
-			memset(ptr_block, 0, block_spare_sz);
-			goto skip_read;
+			is_bad = true;
+			// memset(ptr_block, 0, block_spare_sz);
+			// goto skip_read;
 		}
 
 		for (unsigned int j = 0; j < (1 << pages_per_block); j++) {
 			IOS_Seek(fd, (i << pages_per_block) + j, SEEK_SET); // ret < 0 will not automatically advance the page for us
 			ret = IOS_Read(fd, ptr_block + (j * page_spare_sz), page_spare_sz);
-			if (ret == page_spare_sz)
+			if (ret == page_spare_sz || is_bad)
 				continue;
 
 			switch (ret) {
@@ -402,12 +405,13 @@ int GetSettingValue(int len; const char* setting, const char* item, char out[len
 	return 0;
 }
 
-#define BACKUP_DIR "/private/wii/backups"
+#define BACKUP_DIR "/wii/backups"
 int main(int argc, char **argv) {
 	int ret;
 	uint32_t device_id;
 	char     settingbuf[0x100] = {};
-	char     serial[16] = {};
+	char     serial[16] = "UNKNOWN";
+	char     model[32] = "UNKNOWN";
 
 	__exception_setreload(30);
 	puts("nanddumper@IOS by thepikachugamer");
@@ -453,6 +457,11 @@ int main(int argc, char **argv) {
 			print_error("IOS_Read(setting.txt)", ret);
 		}
 		else {
+			if (!GetSettingValue(settingbuf, "MODEL", model, sizeof model)) {
+				puts("Unable to determine console model!");
+			} else {
+				printf("Console model: %s\n", model);
+			}
 			CryptSettingTxt(settingbuf, settingbuf);
 			ret = GetSettingValue(settingbuf, "CODE", serial, 4);
 			if (!ret || !GetSettingValue(settingbuf, "SERNO", serial + ret, sizeof serial - ret)) {
@@ -461,17 +470,52 @@ int main(int argc, char **argv) {
 				printf("Serial number: %s\n", serial);
 			}
 		}
-
 	}
 
-	if (!fatInitDefault()) {
-		puts("fatInitDefault failed. Nothing much to do here anymore.");
+	FATDevice* dev = NULL;
+	if (!FATMount(&dev)) {
+		puts("FATMount failed. Nothing much to do here anymore.");
+		puts("Well, maybe a read test? Lol.");
 		return -1;
 	}
 
+	if (!dev) {
+		input_init();
+		puts("Choose a device to dump the NAND to.");
+
+		int x = 0;
+		while (true) {
+			clearln();
+			printf("\r[*] Device: < %s > ", devices[x].friendlyName);
+			uint32_t buttons = input_wait(0);
+			// printf("buttons = %x", buttons);
+			if (buttons & INPUT_LEFT) {
+				if (x == 0) x = fat_num_devices;
+				x--;
+			}
+			else if (buttons & (INPUT_RIGHT | INPUT_POWER)) {
+				if (++x == fat_num_devices) x = 0;
+			}
+			else if (buttons & (INPUT_A | INPUT_RESET)) {
+				dev = &devices[x];
+				break;
+			}
+			else if (buttons & INPUT_START) {
+				break;
+			}
+		}
+		input_shutdown();
+
+		putchar('\n');
+		if (!dev) {
+			puts("Operation cancelled by user.");
+			return 0;
+		}
+	}
+
 	char paths[2][128];
-	sprintf(paths[0], BACKUP_DIR "/%s_%s_nand.bin", tstr, serial);
-	sprintf(paths[1], BACKUP_DIR "/%s_%s_keys.bin", tstr, serial);
+	sprintf(paths[0], "%s:" BACKUP_DIR "/%s_%s_nand.bin", dev->name, tstr, serial);
+	sprintf(paths[1], "%s:" BACKUP_DIR "/%s_%s_keys.bin", dev->name, tstr, serial);
 
 	for (char *base = paths[0], *ptr = base; (ptr = strchr(ptr, '/')) != NULL; ptr++)
 	{
@@ -486,23 +530,26 @@ int main(int argc, char **argv) {
 	}
 
 	char comment[256];
-	sprintf(comment,
+	snprintf(comment, sizeof comment,
 		"nanddumper@IOS by thepikachugamer\n"
 		"Console type: %s\n"
+		"Console model: %s\n"
 		"Console ID: %08x\n"
 		"Serial number: %s\n\n"
 
-		"thank you mkwcat <3\n", IS_WIIU ? "vWii (Wii U)" : "Wii (or Mini!)", device_id, serial);
+		"thank you mkwcat <3\n", IS_WIIU ? "vWii (Wii U)" : "Wii (or Mini!)", model, device_id, serial);
 
 	printf("Saving to %s\n", paths[0]);
-	return do_nand_backup(paths[0], paths[1], comment);
+	ret = do_nand_backup(paths[0], paths[1], comment);
+	FATUnmount();
+	return ret;
 }
 
 __attribute__((destructor))
 void finished() {
-	initpads();
+	input_init();
 	// puts("\nmain() exited with some code. idk what");
 	puts("Press any button to exit.");
 	// sleep(5);
-	wait_button(0);
+	input_wait(0);
 }
