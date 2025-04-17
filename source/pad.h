@@ -1,5 +1,4 @@
 #include <stdint.h>
-#include <wiiuse/wpad.h>
 
 enum {
     INPUT_A         = 1 << 0,
@@ -14,6 +13,7 @@ enum {
 
     INPUT_START     = 1 << 8,
 
+    INPUT_EJECT     = 1 << 29,
     INPUT_POWER     = 1 << 30,
     INPUT_RESET     = 1 << 31,
 };

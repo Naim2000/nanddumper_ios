@@ -1,10 +1,6 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <gccore.h>
-#include <ogc/lwp_watchdog.h>
-#include <ogc/pad.h>
-#include <ogc/stm.h>
-#include <wiikeyboard/usbkeyboard.h>
 
 #include "pad.h"
 
@@ -14,6 +10,28 @@
 #define INPUT_USE_FACEBTNS
 
 static int input_initialized = 0;
+
+#ifdef INPUT_WIIMOTE
+#include <wiiuse/wpad.h>
+#endif
+
+#ifdef INPUT_GCN
+#include <ogc/pad.h>
+#endif
+
+#ifdef INPUT_USB_KEYBOARD
+#include <wiikeyboard/usbkeyboard.h>
+#endif
+
+#ifdef INPUT_USE_FACEBTNS
+#include <ogc/lwp_watchdog.h>
+#include <ogc/stm.h>
+
+/* eh. we have AHB access. Lol. */
+#include <ogc/machine/processor.h>
+#define HW_GPIO_IN 0xd8000e8
+#define EJECT_BTN  (1 << 6)
+#endif
 
 #ifdef INPUT_USB_KEYBOARD
 /* USB Keyboard stuffs */
@@ -215,6 +233,11 @@ uint32_t input_read(uint32_t mask) {
 			// printf("stm input is too late");
 
 		stm_input = 0;
+	}
+
+	if (read32(HW_GPIO_IN) & EJECT_BTN /* pulse width limited */ && diff_msec(stm_lastinput, gettime()) >= 200) {
+		button |= INPUT_EJECT;
+		stm_lastinput = gettime();
 	}
 #endif
 

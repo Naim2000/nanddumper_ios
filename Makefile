@@ -30,6 +30,15 @@ CXXFLAGS	=	$(CFLAGS)
 
 LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 
+ifeq ($(READ_TEST), 1)
+	TARGET := $(TARGET)_readtest
+	CFLAGS += -DNANDDUMPER_READ_TEST
+endif
+
+ifdef FORCE_IOS
+	TARGET := $(TARGET)_ios$(FORCE_IOS)
+	CFLAGS += -DNANDDUMPER_FORCE_IOS=$(FORCE_IOS)
+endif
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
@@ -128,22 +137,6 @@ $(OFILES_SOURCES) : $(HFILES)
 #---------------------------------------------------------------------------------
 %.bin.o	%_bin.h :	%.bin
 #---------------------------------------------------------------------------------
-	@echo $(notdir $<)
-	$(bin2o)
-
-%.tik.o %_tik.h:	%.tik
-	@echo $(notdir $<)
-	$(bin2o)
-
-%.certs.o %_certs.h:	%.certs
-	@echo $(notdir $<)
-	$(bin2o)
-
-%.tmd.o %_tmd.h:	%.tmd
-	@echo $(notdir $<)
-	$(bin2o)
-
-%.app.o %_app.h:	%.app
 	@echo $(notdir $<)
 	$(bin2o)
 

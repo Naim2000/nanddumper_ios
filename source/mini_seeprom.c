@@ -83,6 +83,7 @@ u16 seeprom_read(void *dst, u16 offset, u16 size)
 {
     if (!dst || offset >= SEEPROM_SIZE || !size || (offset + size) > SEEPROM_SIZE) return 0;
 
+    u32 level;
     u16 cur_offset = 0;
 
     u8 *ptr = (u8*)dst;
@@ -102,6 +103,8 @@ u16 seeprom_read(void *dst, u16 offset, u16 size)
     }
 
     if (end_addr == start_addr) end_addr_size -= start_addr_offset;
+
+    _CPU_ISR_Disable(level);
 
     mask32(HW_GPIO1OUT, GP_EEP_CLK, 0);
     mask32(HW_GPIO1OUT, GP_EEP_CS, 0);
@@ -142,6 +145,8 @@ u16 seeprom_read(void *dst, u16 offset, u16 size)
             cur_offset += HW_SEEPROM_BLK_SIZE;
         }
     }
+
+    _CPU_ISR_Restore(level);
 
     return cur_offset;
 }

@@ -3,16 +3,28 @@
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <errno.h>
 #include <time.h>
 #include <ogc/machine/processor.h>
+#include <ogc/system.h>
+#include <ogc/cache.h>
 #include <ogc/lwp_watchdog.h>
+#include <ogc/ios.h>
+#include <ogc/ipc.h>
+#include <ogc/es.h>
+
+#ifndef NANDDUMPER_READ_TEST
 #include <fat.h>
+#endif
 
 #include "common.h"
 #include "video.h"
 #include "pad.h"
+#ifndef NANDDUMPER_READ_TEST
 #include "fatMounter.h"
+#endif
 #include "sha.h"
 #include "otp.h"
 #include "mini_seeprom.h"
@@ -24,21 +36,7 @@
 #define LT_CHIPREVID	0x0D8005A0
 #define IS_WIIU			((read32(LT_CHIPREVID) & 0xFFFF0000) == 0xCAFE0000)
 
-
-uint16_t* const IOSVersion = (uint16_t* const)0x80003140;
-
 void __exception_setreload(unsigned seconds);
-
-typedef struct FlashErrorLog {
-	int page, command, ret;
-} FlashErrorLog;
-
-typedef struct FlashComandLog {
-	int deletes, writes, reads, copies; /* ? */
-	int error_over_idx, error_idx;
-	FlashErrorLog errors[32];
-} FlashComandLog;
-CHECK_STRUCT_SIZE(FlashComandLog, 0x198);
 
 typedef struct FlashSizeInfo {
 	// log2
@@ -59,8 +57,12 @@ CHECK_STRUCT_SIZE(KeysBin, 0x400);
 
 // thank you mkwcat (<3)
 int do_the_haxx(void) {
-	// IOS_ReloadIOS(9);
-	IOS_ReloadIOS(*IOSVersion);
+#ifdef NANDDUMPER_FORCE_IOS
+	printf("Forcing IOS %d\n", NANDDUMPER_FORCE_IOS);
+	IOS_ReloadIOS(NANDDUMPER_FORCE_IOS);
+#else
+	IOS_ReloadIOS(IOS_GetVersion());
+#endif
 	usleep(100000);
 
 	uint32_t* mem1 = (uint32_t *)0x80000000;
@@ -96,15 +98,18 @@ int do_the_haxx(void) {
 }
 
 int patch_flash_access(void) {
-	void* mem2_ptr_cur = (void *)0x933E0000;
-	void* mem2_ptr_end = (void *)0x94000000;
+	uint32_t* MEM2Size = (uint32_t *)0x80003118;
+
+	void* mem2_ptr_cur = (void *)MEM2Size[2]; // End of MEM2 addressable to PPC.
+	void* mem2_ptr_end = (void *)(0x90000000 + *MEM2Size); // Physical MEM2 size.
+	uint16_t* pc = NULL;
 
 	// new
 	uint16_t patternA[] = {
 		0x2300, // mov r3, #0
 		0x2b01, // cmp r3, #1
 		0xd102, // bne 0x8
-	/*	0xf7ff, 0xfe00		bl FS_OpenInterface */
+		/*         bl FS_OpenInterface */
 	};
 
 	// old
@@ -114,23 +119,28 @@ int patch_flash_access(void) {
 		0xd102, // bne 0x8
 	};
 
-	uint16_t* FS_OpenInterface = NULL;
-	uint16_t* pc = memmem(mem2_ptr_cur, mem2_ptr_end - mem2_ptr_cur, patternA, sizeof patternA);
-	if (!pc) {
-		puts("I guess this is IOS 3x?");
+	if (IOS_GetVersion() >= 40)
+		pc = memmem(mem2_ptr_cur, mem2_ptr_end - mem2_ptr_cur, patternA, sizeof patternA);
+	else
 		pc = memmem(mem2_ptr_cur, mem2_ptr_end - mem2_ptr_cur, patternB, sizeof patternB);
-		if (!pc) {
-			puts("Still could not find stubbed /dev/flash check");
-			return -1;
+
+
+	if (!pc) {
+		puts("Could not find stubbed /dev/flash check. It's not actually enabled, is it?");
+		int fd = IOS_Open("/dev/flash", 0);
+		if (fd >= 0) {
+			IOS_Close(fd);
+			puts("... Oh, it really is...");
+			return 0;
 		}
+		return -1;
 	}
 
 	pc += 3;
 	int dst = ((pc[0] & 0x7FF) << 11) | (pc[1] & 0x7FF);
 	dst |= -(dst & (1 << 21));
 
-	FS_OpenInterface = pc + dst + 2;
-	// printf("%p: %04hx %04hx\n", pc, pc[0], pc[1]);
+	uint16_t* FS_OpenInterface = pc + dst + 2;
 	// printf("FS_OpenInterface => %p\n", FS_OpenInterface);
 
 	uint16_t pattern2[] = {
@@ -138,40 +148,26 @@ int patch_flash_access(void) {
 		0x2b00, // cmp r3, #0x0
 		0xd002, // beq 0x8
 		0x2001, // mov r0,#1
-		0x4240, // rsb r0,r0
+		0x4240, // rsb r0,r0 @ -1 (EPERM)
 		0xe008, // b 0xa
-	/*	0xf7fa, 0xfcb7		bl FS_OpenBoot2 */
+		/*         bl FS_OpenBoot2 */
 	};
 
-	pc = memmem(mem2_ptr_cur, mem2_ptr_end - mem2_ptr_cur, pattern2, sizeof pattern2);
+	pc = memmem(pc, mem2_ptr_end - (void *)pc, pattern2, sizeof pattern2);
 	if (!pc) {
 		puts("Where is the /dev/boot2 uid check?");
 		return -2;
 	}
 
 	pc += 6;
-	// printf("%p: %04hx %04hx\n", pc, pc[0], pc[1]); // bl FS_OpenBoot2
+	// printf("FS_OpenBoot2 call => %p\n", pc);
 
 	// Replace the branch.
 	dst = FS_OpenInterface - (pc + 2);
 	pc[0] = 0xF400 | ((dst >> 11) & 0x7FF);
 	pc[1] = 0xF800 | (dst & 0x7FF);
-	DCFlushRange(pc, 4);
-	// printf("%p: %04hx %04hx\n", pc, pc[0], pc[1]);
+	DCFlushRange(pc, 6);
 
-	/* I can never seem to get this working if I try replace it with flash. */
-	/*
-	// Cosmetics
-	const char pattern3[] = "fs\0\0boot2";
-	char* ptr = memmem(mem2_ptr_cur, mem2_ptr_end - mem2_ptr_cur, pattern3, sizeof(pattern3));
-	if (!ptr) {
-		puts("Where is the boot2 string !?");
-		return -3;
-	}
-
-	// memcpy(ptr + 4, "flash", 5);
-	// DCFlushRange(ptr, 10);
-	*/
 	return 0;
 }
 
@@ -185,15 +181,19 @@ static bool page_is_erased(unsigned char* page, FlashSizeInfo* size) {
 	return true;
 }
 
-int do_nand_backup(const char* nand_path, const char* keys_path, const char comment[256]) {
+int do_nand_backup(
+#ifndef NANDDUMPER_READ_TEST
+	const char* nand_path, const char* keys_path,
+#endif
+	const char comment[256]
+) {
 	int ret, fd;
 	FlashSizeInfo nandsize = {};
 	unsigned int buffer_cnt = 3, buffer_cnt_mask = (1 << buffer_cnt) - 1;
-	unsigned int page_spare_sz, pages_per_block, block_spare_sz, n_blocks, buffer_sz;
+	unsigned int page_spare_sz, pages_per_block, block_spare_sz, n_blocks, buffer_sz, file_sz;
 	unsigned char *buffer = NULL;
 	ShaContext sha = {};
 	uint32_t hash[5] = {};
-	FILE* fp = NULL;
 	KeysBin keys = {};
 
 	strcpy(keys.comment, comment);
@@ -220,22 +220,36 @@ int do_nand_backup(const char* nand_path, const char* keys_path, const char comm
 		seeprom_read(&keys.seeprom, 0, SEEPROM_SIZE);
 	}
 
+#ifndef NANDDUMPER_READ_TEST
+	FILE* fp = NULL;
 	fp = fopen(keys_path, "wb");
 	if (!fp) {
 		perror(keys_path);
 		return -errno;
 	}
 
-	if (!fwrite(&keys, sizeof keys, 1, fp)) {
+	ret = fwrite(&keys, sizeof keys, 1, fp);
+	fclose(fp);
+	if (!ret) {
 		perror(keys_path);
-		fclose(fp);
 		return -errno;
 	}
-
-	fd = ret = IOS_Open("/dev/boot2", 0); // Pay attention to how the patch works.
+#endif
+	fd = ret = IOS_Open("/dev/flash", 0);
 	if (ret < 0) {
-		print_error("IOS_Open(/dev/flash)", ret);
-		return ret;
+		// print_error("IOS_Open(/dev/flash)", ret);
+		fd = ret = IOS_Open("/dev/boot2", 0); // Pay attention to how the patch works.
+		if (ret < 0) {
+			print_error("IOS_Open(/dev/boot2)*", ret);
+			return ret;
+		}
+	}
+
+	// safety test
+	if (IOS_Ioctl(fd, 4, NULL, 0, NULL, 0) == -4) {
+		puts("Hey, this is not /dev/flash....");
+		IOS_Close(fd);
+		return -4;
 	}
 
 	ret = IOS_Ioctl(fd, 1, NULL, 0, &nandsize, sizeof(FlashSizeInfo));
@@ -249,10 +263,24 @@ int do_nand_backup(const char* nand_path, const char* keys_path, const char comm
 	block_spare_sz  = page_spare_sz << pages_per_block;
 	n_blocks        = 1 << (nandsize.nand_size - nandsize.block_size);
 	buffer_sz       = block_spare_sz << buffer_cnt;
+	file_sz         = block_spare_sz * n_blocks;
 
 	buffer = aligned_alloc(0x40, buffer_sz);
 	if (!buffer) {
 		puts("Memory allocation failed");
+		goto out;
+	}
+#ifndef NANDDUMPER_READ_TEST
+	struct statvfs fs;
+	ret = statvfs(nand_path, &fs);
+	if (ret < 0) {
+		perror("statvfs");
+		return -errno;
+	}
+
+	if ((fs.f_bsize * fs.f_bfree) <= file_sz) {
+		printf("Not enough space available on %.*s\n", strchr(nand_path, '/') - nand_path, nand_path);
+		printf("At least %uMB free space is required!\n", file_sz >> 20);
 		goto out;
 	}
 
@@ -262,7 +290,7 @@ int do_nand_backup(const char* nand_path, const char* keys_path, const char comm
 		goto out;
 	}
 
-	if (fseek(fp, (block_spare_sz * n_blocks) + sizeof keys, SEEK_END) < 0) {
+	if (fseek(fp, file_sz, SEEK_END) < 0 || !fwrite(&keys, sizeof keys, 1, fp) /* force expand the file(?) */) {
 		perror(nand_path);
 		fclose(fp);
 		fp = NULL;
@@ -271,7 +299,9 @@ int do_nand_backup(const char* nand_path, const char* keys_path, const char comm
 	}
 
 	fseek(fp, 0, SEEK_SET);
-
+#else
+	puts("Press RESET to stop. It only takes like 100 seconds, though");
+#endif
 	Sha_Init(&sha);
 	uint64_t start = gettime();
 	for (unsigned int i = 0; i < n_blocks; i++) {
@@ -320,8 +350,9 @@ int do_nand_backup(const char* nand_path, const char* keys_path, const char comm
 			}
 		}
 
-skip_read:
+// skip_read:
 		Sha_Update(&sha, ptr_block, block_spare_sz);
+#ifndef NANDDUMPER_READ_TEST
 		if (((i & buffer_cnt_mask) == buffer_cnt_mask && !fwrite(buffer, buffer_sz, 1, fp))) {
 			perror("fwrite");
 			fclose(fp);
@@ -329,17 +360,23 @@ skip_read:
 			remove(nand_path);
 			goto out;
 		}
+#else
+		if (SYS_ResetButtonDown())
+			break;
+#endif
 	}
 
+#ifndef NANDDUMPER_READ_TEST
 	memcpy(buffer, &keys, sizeof keys);
 	Sha_Update(&sha, buffer, sizeof keys);
 	fwrite(buffer, sizeof keys, 1, fp);
 	fclose(fp);
 	fp = NULL;
+#endif
 
 	Sha_Finish(&sha, hash);
+#ifndef NANDDUMPER_READ_TEST
 	printf("\n\nFinal SHA1 hash: %08x%08x%08x%08x%08x\n", hash[0], hash[1], hash[2], hash[3], hash[4]);
-	printf("Time elapsed: %.3fs\n", diff_msec(start, gettime()) / 1000.0f);
 	{
 		char* sha_path = alloca(strlen(nand_path) + 6);
 		strcpy(sha_path, nand_path);
@@ -352,12 +389,15 @@ skip_read:
 			fclose(fp_sha);
 		}
 	}
+#endif
 
+	printf("Time elapsed: %.3fs\n", diff_msec(start, gettime()) / 1000.0f);
 out:
 	IOS_Close(fd);
 	free(buffer);
+#ifndef NANDDUMPER_READ_TEST
 	if (fp) fclose(fp);
-
+#endif
 	return ret;
 }
 
@@ -407,45 +447,41 @@ int GetSettingValue(int len; const char* setting, const char* item, char out[len
 
 #define BACKUP_DIR "/wii/backups"
 int main(int argc, char **argv) {
-	int ret;
-	uint32_t device_id;
-	char     settingbuf[0x100] = {};
-	char     serial[16] = "UNKNOWN";
-	char     model[32] = "UNKNOWN";
+	int         ret;
+	uint32_t    device_id;
+	char        settingbuf[0x100] = {};
+	char        serial[20] = "UNKNOWN";
+	char        model[32] = "UNKNOWN";
+	const char *type = IS_WIIU ? "vWii (Wii U)" : "Wii/Wii Mini";
+	char        comment[256];
 
 	__exception_setreload(30);
 	puts("nanddumper@IOS by thepikachugamer");
 
+#ifdef NANDDUMPER_READ_TEST
+	puts("\x1b[42m Read test build! \x1b[40m");
+#endif
+
 	ret = do_the_haxx();
 	if (ret < 0)
-		return ret;
+		goto out;
 
-	printf("running on IOS%u v%u (v%u.%u)\n\n", IOSVersion[0], IOSVersion[1], IOSVersion[1] >> 8, IOSVersion[1] & 0xFF);
+	uint16_t iosRev = IOS_GetRevision();
+	printf("running on IOS%u v%u (v%u.%u)\n\n", IOS_GetVersion(), iosRev, iosRev >> 8, iosRev & 0xFF);
 
-	printf("Console type: %s\n", IS_WIIU ? "vWii (Wii U)" : "Wii (or Mini!)");
+	// printf("Console type: %s\n", IS_WIIU ? "vWii (Wii U)" : "Wii (or Mini!)");
 
 	ret = patch_flash_access();
 	if (ret < 0)
-		return ret;
+		goto out;
 
-	/* get the time... */
-	time_t tm = 0;
-	struct tm dt = {};
-	char tstr[30];
-
-	time(&tm);
-	localtime_r(&tm, &dt);
-	sprintf(tstr, "%02d%02d%02d", dt.tm_year - 100, dt.tm_mon + 1, dt.tm_mday);
-
-	/* get the serial... */
 	ret = ES_GetDeviceID(&device_id);
 	if (ret < 0) {
 		print_error("ES_GetDeviceID", ret);
-		return ret;
+		goto out;
 	}
-	sprintf(serial, "NG%08x", device_id);
-	printf("Console ID: %08x\n", device_id);
 
+	/* get the serial... */
 	int fd = ret = IOS_Open("/title/00000001/00000002/data/setting.txt", 1);
 	if (ret < 0) {
 		print_error("IOS_Open(setting.txt)", ret);
@@ -457,38 +493,90 @@ int main(int argc, char **argv) {
 			print_error("IOS_Read(setting.txt)", ret);
 		}
 		else {
-			if (!GetSettingValue(settingbuf, "MODEL", model, sizeof model)) {
-				puts("Unable to determine console model!");
-			} else {
-				printf("Console model: %s\n", model);
-			}
 			CryptSettingTxt(settingbuf, settingbuf);
-			ret = GetSettingValue(settingbuf, "CODE", serial, 4);
-			if (!ret || !GetSettingValue(settingbuf, "SERNO", serial + ret, sizeof serial - ret)) {
-				puts("Unable to determine serial number!");
-			} else {
-				printf("Serial number: %s\n", serial);
+
+			if (GetSettingValue(settingbuf, "MODEL", model, sizeof model) && !IS_WIIU) {
+				if (memcmp(model, "RVT", 3) == 0)
+					type = "NDEV";
+				else if (memcmp(model, "RVL-001", 7) == 0)
+					type = "Wii";
+				else if (memcmp(model, "RVL-101", 7) == 0)
+					type = "Wii Family Edition";
+				else if (memcmp(model, "RVL-201", 7) == 0)
+					type = "Wii Mini";
+			}
+
+			char code[4];
+			char serno[10];
+
+			if (GetSettingValue(settingbuf, "CODE", code, sizeof code) && GetSettingValue(settingbuf, "SERNO", serno, sizeof serno)) {
+				snprintf(serial, sizeof serial, "%s%s", code, serno);
+
+				int i, check = 0;
+				for (i = 0; i < 8; i++) {
+					uint8_t digit = serno[i] - '0';
+					if (digit >= 10) {
+						strcat(serial, "(?\?)");
+						break;
+					}
+
+					if (i & 1)
+						digit += (digit << 1);
+
+					check += digit;
+				}
+				if (i == 8) {
+					check = (10 - (check % 10)) % 10;
+					if (serno[i] - '0' != check)
+						strcat(serial, "(?)");
+				}
 			}
 		}
 	}
+
+	printf(
+		"Console model: %s [%s]\n"
+		"Console ID:    %08x\n"
+		"Serial number: %s\n\n", type, model, device_id, serial
+	);
+
+
+	snprintf(comment, sizeof comment,
+		"nanddumper@IOS by thepikachugamer\n"
+		"Console model: %s [%s]\n"
+		"Console ID: %08x\n"
+		"Serial number: %s\n\n"
+
+		"thank you mkwcat <3\n", type, model, device_id, serial
+	);
+
+#ifndef NANDDUMPER_READ_TEST
+	/* get the time... */
+	time_t tm = 0;
+	struct tm dt = {};
+	char datestr[30];
+
+	time(&tm);
+	localtime_r(&tm, &dt);
+	sprintf(datestr, "%02d%02d%02d", dt.tm_year - 100, dt.tm_mon + 1, dt.tm_mday);
+
 
 	FATDevice* dev = NULL;
 	if (!FATMount(&dev)) {
 		puts("FATMount failed. Nothing much to do here anymore.");
 		puts("Well, maybe a read test? Lol.");
-		return -1;
+		goto out;
 	}
 
 	if (!dev) {
 		input_init();
-		puts("Choose a device to dump the NAND to.");
+		puts("[*] Choose a device to dump the NAND to.");
 
 		int x = 0;
 		while (true) {
 			clearln();
 			printf("\r[*] Device: < %s > ", devices[x].friendlyName);
 			uint32_t buttons = input_wait(0);
-			// printf("buttons = %x", buttons);
 			if (buttons & INPUT_LEFT) {
 				if (x == 0) x = fat_num_devices;
 				x--;
@@ -500,56 +588,65 @@ int main(int argc, char **argv) {
 				dev = &devices[x];
 				break;
 			}
-			else if (buttons & INPUT_START) {
+			else if (buttons & (INPUT_START | INPUT_EJECT)) {
 				break;
 			}
 		}
 		input_shutdown();
 
 		putchar('\n');
-		if (!dev) {
-			puts("Operation cancelled by user.");
-			return 0;
-		}
+		putchar('\n');
+	}
+
+	if (!dev) {
+		puts("Operation cancelled by user.");
+		goto out_nowait;
 	}
 
 	char paths[2][128];
-	sprintf(paths[0], "%s:" BACKUP_DIR "/%s_%s_nand.bin", dev->name, tstr, serial);
-	sprintf(paths[1], "%s:" BACKUP_DIR "/%s_%s_keys.bin", dev->name, tstr, serial);
-
-	for (char *base = paths[0], *ptr = base; (ptr = strchr(ptr, '/')) != NULL; ptr++)
+	// ehh, why was i numbering the keys file
+	sprintf(paths[1], "%s:" BACKUP_DIR "/%s_%s_keys.bin", dev->name, datestr, serial);
+	for (char *base = paths[1], *ptr = base; (ptr = strchr(ptr, '/')) != NULL; ptr++)
 	{
 		*ptr = 0;
-		ret = mkdir(base, 0644);
-		*ptr = '/';
-
-		if (ret < 0 && errno != EEXIST) {
+		if (mkdir(base, 0644) < 0 && errno != EEXIST) {
 			perror(base);
-			return -errno;
+			ret = -errno;
+			goto out;
 		}
+		*ptr = '/';
 	}
 
-	char comment[256];
-	snprintf(comment, sizeof comment,
-		"nanddumper@IOS by thepikachugamer\n"
-		"Console type: %s\n"
-		"Console model: %s\n"
-		"Console ID: %08x\n"
-		"Serial number: %s\n\n"
+	for (int i = 0; i < 100; i++) {
+		struct stat st;
 
-		"thank you mkwcat <3\n", IS_WIIU ? "vWii (Wii U)" : "Wii (or Mini!)", model, device_id, serial);
+		sprintf(paths[0], "%s:" BACKUP_DIR "/%s_%s_nand_%02d.bin", dev->name, datestr, serial, i);
+
+		if (stat(paths[0], &st) < 0)
+			break;
+	}
+
+	puts("Start the NAND backup now?");
+	puts("Press HOME/START/EJECT to cancel. Press any other button to continue.\n");
+	usleep(10000);
+	if (input_wait(0) & (INPUT_START | INPUT_EJECT))
+		goto out_nowait;
 
 	printf("Saving to %s\n", paths[0]);
-	ret = do_nand_backup(paths[0], paths[1], comment);
-	FATUnmount();
-	return ret;
-}
 
-__attribute__((destructor))
-void finished() {
+	ret = do_nand_backup(paths[0], paths[1], comment);
+#else
+	ret = do_nand_backup(comment);
+#endif
+out:
 	input_init();
-	// puts("\nmain() exited with some code. idk what");
 	puts("Press any button to exit.");
-	// sleep(5);
 	input_wait(0);
+out_nowait:
+#ifndef NANDDUMPER_READ_TEST
+	FATUnmount();
+#endif
+	input_shutdown();
+
+	return ret;
 }
