@@ -1,4 +1,3 @@
-#define STR(X) __stringify(X)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +30,8 @@
 #include "mini_seeprom.h"
 #include "vwii_sram_otp.h"
 #include "realcode_bin.h"
+
+#define STR(X) __stringify(X)
 
 #define HW_AHBPROT		0x0D800064
 #define MEM2_PROT		0x0D8B420A
@@ -452,6 +453,7 @@ int main(int argc, char **argv) {
 	uint32_t    device_id;
 	char        settingbuf[0x100] = {};
 	char        serial[20] = "UNKNOWN";
+	int         slen = 0;
 	char        model[32] = "UNKNOWN";
 	const char *type = IS_WIIU ? "vWii (Wii U)" : "Wii/Wii Mini";
 	char        comment[256];
@@ -511,7 +513,7 @@ int main(int argc, char **argv) {
 			char serno[10];
 
 			if (GetSettingValue(settingbuf, "CODE", code, sizeof code) && GetSettingValue(settingbuf, "SERNO", serno, sizeof serno)) {
-				snprintf(serial, sizeof serial, "%s%s", code, serno);
+				slen = snprintf(serial, sizeof serial, "%s%s", code, serno);
 
 				int i, check = 0;
 				for (i = 0; i < 8; i++) {
@@ -605,6 +607,7 @@ int main(int argc, char **argv) {
 	}
 
 	char paths[2][128];
+	serial[slen] = '\0';
 	// ehh, why was i numbering the keys file
 	sprintf(paths[1], "%s:" BACKUP_DIR "/%s_%s_keys.bin", dev->name, datestr, serial);
 	for (char *base = paths[1], *ptr = base; (ptr = strchr(ptr, '/')) != NULL; ptr++)
