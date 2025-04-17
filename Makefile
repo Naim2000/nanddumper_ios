@@ -20,12 +20,12 @@ BUILD		:=	build
 SOURCES		:=	source source/realcode
 DATA		:=	data
 INCLUDES	:=
-
+REVISION	:=	$(shell git describe --tags --abbrev=8 --dirty | sed 's/-[0-9]*-g/-/')
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
 
-CFLAGS	= -g -O2 -Wall $(MACHDEP) $(INCLUDE) -D_GNU_SOURCE
+CFLAGS	= -g -O2 -Wall $(MACHDEP) $(INCLUDE) -D_GNU_SOURCE -DNANDDUMPER_REVISION=$(REVISION)
 CXXFLAGS	=	$(CFLAGS)
 
 LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map

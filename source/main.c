@@ -1,3 +1,4 @@
+#define STR(X) __stringify(X)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -456,7 +457,7 @@ int main(int argc, char **argv) {
 	char        comment[256];
 
 	__exception_setreload(30);
-	puts("nanddumper@IOS by thepikachugamer");
+	puts("nanddumper@IOS " STR(NANDDUMPER_REVISION) " by thepikachugamer");
 
 #ifdef NANDDUMPER_READ_TEST
 	puts("\x1b[42m Read test build! \x1b[40m");
