@@ -453,7 +453,7 @@ int main(int argc, char **argv) {
 	uint32_t    device_id;
 	char        settingbuf[0x100] = {};
 	char        serial[20] = "UNKNOWN";
-	int         slen = 0;
+	int         slen = strlen(serial);
 	char        model[32] = "UNKNOWN";
 	const char *type = IS_WIIU ? "vWii (Wii U)" : "Wii/Wii Mini";
 	char        comment[256];
@@ -466,6 +466,7 @@ int main(int argc, char **argv) {
 #endif
 
 	ret = do_the_haxx();
+	input_init();
 	if (ret < 0)
 		goto out;
 
@@ -563,7 +564,6 @@ int main(int argc, char **argv) {
 	localtime_r(&tm, &dt);
 	sprintf(datestr, "%02d%02d%02d", dt.tm_year - 100, dt.tm_mon + 1, dt.tm_mday);
 
-
 	FATDevice* dev = NULL;
 	if (!FATMount(&dev)) {
 		puts("FATMount failed. Nothing much to do here anymore.");
@@ -572,7 +572,6 @@ int main(int argc, char **argv) {
 	}
 
 	if (!dev) {
-		input_init();
 		puts("[*] Choose a device to dump the NAND to.");
 
 		int x = 0;
@@ -643,7 +642,6 @@ int main(int argc, char **argv) {
 	ret = do_nand_backup(comment);
 #endif
 out:
-	input_init();
 	puts("Press any button to exit.");
 	input_wait(0);
 out_nowait:
