@@ -31,11 +31,13 @@ CXXFLAGS	=	$(CFLAGS)
 LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 
 ifeq ($(READ_TEST), 1)
+	BUILD := $(BUILD)_readtest
 	TARGET := $(TARGET)_readtest
 	CFLAGS += -DNANDDUMPER_READ_TEST
 endif
 
 ifdef FORCE_IOS
+	BUILD := $(BUILD)_ios$(FORCE_IOS)
 	TARGET := $(TARGET)_ios$(FORCE_IOS)
 	CFLAGS += -DNANDDUMPER_FORCE_IOS=$(FORCE_IOS)
 endif
