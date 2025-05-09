@@ -42,7 +42,7 @@ void __exception_setreload(unsigned seconds);
 
 typedef struct FlashSizeInfo {
 	// log2
-	int   nand_size, block_size, page_size, spare_size, ecc_size, /* ? */ unknown;
+	int   nand_size, block_size, page_size, spare_size, ecc_size, unknown;
 	short check_byte_ofs;
 	short padding;
 } FlashSizeInfo;
@@ -80,7 +80,7 @@ int do_the_haxx(void) {
 	mem1[6] = 0xFFFF0014;	/* reserved handler */
 
 	IOS_Write(-1, mem1, 0x40);
-	int ret = Sha_Init((ShaContext *)0xFFFE0028);
+	int ret = Sha_Init((void *)0xFFFE0028);
 	if (ret < 0) {
 		print_error("/dev/sha exploit", ret);
 		return ret;
@@ -174,9 +174,9 @@ int patch_flash_access(void) {
 }
 
 static bool page_is_erased(unsigned char* page, FlashSizeInfo* size) {
-	uint32_t* spare32 = (uint32_t *)(page + (1 << size->page_size));
-	for (int i = 0; i < (1 << (size->spare_size - 2)); i++) {
-		if (spare32[i] != 0xFFFFFFFF)
+	uint32_t* spare32 = (uint32_t *)(page + (1 << size->page_size) + (1 << size->spare_size));
+	for (int i = 1 << (size->page_size - 9); i; i--) {
+		if (spare32[-i] != 0xFFFFFFFF)
 			return false;
 	}
 
@@ -191,7 +191,7 @@ int do_nand_backup(
 ) {
 	int ret, fd;
 	FlashSizeInfo nandsize = {};
-	unsigned int buffer_cnt = 3, buffer_cnt_mask = (1 << buffer_cnt) - 1;
+	unsigned int buffer_cnt = 8;
 	unsigned int page_spare_sz, pages_per_block, block_spare_sz, n_blocks, buffer_sz, file_sz;
 	unsigned char *buffer = NULL;
 	ShaContext sha = {};
@@ -205,19 +205,13 @@ int do_nand_backup(
 	 * That data is stored in bank 6 of the OTP. But we can't read the extra banks of the OTP from here. So instead, c2w reads that data from OTP and places it at the top of SRAM, and vIOS works with that instead. So let's work with that instead.
 	 */
 	if (IS_WIIU) {
-		vwii_sram_otp_t sram_otp = {};
-		vwii_sram_otp_read(&sram_otp, 0, SRAM_OTP_SIZE);
+		keys.seeprom.ms_id = vwii_sram_otp->ms_id;
+		keys.seeprom.ca_id = vwii_sram_otp->ca_id;
+		keys.seeprom.ng_key_id = vwii_sram_otp->ng_key_id;
+		memcpy(keys.seeprom.ng_sig, vwii_sram_otp->ng_sig, sizeof(keys.seeprom.ng_sig));
 
-#if 0
-		printf("* from the SRAM OTP: Root-CA%08x-MS%08x\n", sram_otp.ca_id, sram_otp.ms_id);
-#endif
-
-		keys.seeprom.ms_id = sram_otp.ms_id;
-		keys.seeprom.ca_id = sram_otp.ca_id;
-		keys.seeprom.ng_key_id = sram_otp.ng_key_id;
-		memcpy(keys.seeprom.ng_sig, sram_otp.ng_sig, sizeof(keys.seeprom.ng_sig));
 		// For the effect. Otherwise, I would just build the entire thing from the device certificate
-		memcpy(keys.seeprom.korean_key, sram_otp.korean_key, sizeof(keys.seeprom.korean_key));
+		memcpy(keys.seeprom.korean_key, vwii_sram_otp->korean_key, sizeof(keys.seeprom.korean_key));
 	} else {
 		seeprom_read(&keys.seeprom, 0, SEEPROM_SIZE);
 	}
@@ -250,8 +244,8 @@ int do_nand_backup(
 	// safety test
 	if (IOS_Ioctl(fd, 4, NULL, 0, NULL, 0) == -4) {
 		puts("Hey, this is not /dev/flash....");
-		IOS_Close(fd);
-		return -4;
+		ret = -4;
+		goto out;
 	}
 
 	ret = IOS_Ioctl(fd, 1, NULL, 0, &nandsize, sizeof(FlashSizeInfo));
@@ -264,7 +258,7 @@ int do_nand_backup(
 	pages_per_block = nandsize.block_size - nandsize.page_size;
 	block_spare_sz  = page_spare_sz << pages_per_block;
 	n_blocks        = 1 << (nandsize.nand_size - nandsize.block_size);
-	buffer_sz       = block_spare_sz << buffer_cnt;
+	buffer_sz       = block_spare_sz * buffer_cnt;
 	file_sz         = block_spare_sz * n_blocks;
 
 	buffer = aligned_alloc(0x40, buffer_sz);
@@ -281,8 +275,8 @@ int do_nand_backup(
 	}
 
 	if ((fs.f_bsize * fs.f_bfree) <= file_sz) {
-		printf("Not enough space available on %.*s\n", strchr(nand_path, '/') - nand_path, nand_path);
-		printf("At least %uMB free space is required!\n", file_sz >> 20);
+		printf("Not enough space available on %.*s\n", strcspn(nand_path, "/"), nand_path);
+		printf("At least %uMiB free space is required!\n", file_sz >> 20);
 		goto out;
 	}
 
@@ -292,25 +286,28 @@ int do_nand_backup(
 		goto out;
 	}
 
-	if (fseek(fp, file_sz, SEEK_END) < 0 || !fwrite(&keys, sizeof keys, 1, fp) /* force expand the file(?) */) {
-		perror(nand_path);
-		fclose(fp);
-		fp = NULL;
-		remove(nand_path);
-		goto out;
+	if (fseek(fp, file_sz, SEEK_SET) < 0) {
+		perror("fseek");
+		goto backup_fail;
+	}
+
+	if (!fwrite(&keys, sizeof keys, 1, fp) /* force expand the file(?) */) {
+		perror("fwrite");
+		goto backup_fail;
 	}
 
 	fseek(fp, 0, SEEK_SET);
-#else
-	puts("Press RESET to stop. It only takes like 100 seconds, though");
-#endif
 	Sha_Init(&sha);
+
+#endif
+	puts("Press (hold?) HOME/START/EJECT to stop.");
+
+	int want_exit = 0;
 	uint64_t start = gettime();
 	for (unsigned int i = 0; i < n_blocks; i++) {
-		unsigned char *ptr_block = buffer + ((i & buffer_cnt_mask) * block_spare_sz);
-		bool is_bad = false;
+		unsigned char *ptr_block = buffer + ((i % buffer_cnt) * block_spare_sz);
 
-		printf("\rBlock progress: %i/%i // %.3fs  ", i + 1, n_blocks, diff_msec(start, gettime()) / 1000.f);
+		printf("\rBlock progress: [ %i/%i ] | %.3fs   ", i + 1, n_blocks, diff_msec(start, gettime()) / 1000.f);
 
 		IOS_Seek(fd, i << pages_per_block, SEEK_SET);
 		ret = IOS_Ioctl(fd, 4, NULL, 0, NULL, 0);
@@ -322,15 +319,14 @@ int do_nand_backup(
 				printf("check block %u => %i\n", i, ret);
 			}
 
-			is_bad = true;
-			// memset(ptr_block, 0, block_spare_sz);
-			// goto skip_read;
+			memset(ptr_block, 0, block_spare_sz);
+			goto skip_read;
 		}
 
 		for (unsigned int j = 0; j < (1 << pages_per_block); j++) {
 			IOS_Seek(fd, (i << pages_per_block) + j, SEEK_SET); // ret < 0 will not automatically advance the page for us
 			ret = IOS_Read(fd, ptr_block + (j * page_spare_sz), page_spare_sz);
-			if (ret == page_spare_sz || is_bad)
+			if (ret == page_spare_sz)
 				continue;
 
 			switch (ret) {
@@ -352,35 +348,46 @@ int do_nand_backup(
 			}
 		}
 
-// skip_read:
-		Sha_Update(&sha, ptr_block, block_spare_sz);
+skip_read:
 #ifndef NANDDUMPER_READ_TEST
-		if (((i & buffer_cnt_mask) == buffer_cnt_mask && !fwrite(buffer, buffer_sz, 1, fp))) {
-			perror("fwrite");
-			fclose(fp);
-			fp = NULL;
-			remove(nand_path);
-			goto out;
+		unsigned write_cnt = (i % buffer_cnt) + 1;
+		if (write_cnt == buffer_cnt || i + 1 >= n_blocks) {
+			Sha_Update(&sha, ptr_block, block_spare_sz * write_cnt);
+			// Time to write
+			int tries = 3;
+			while (!fwrite(buffer, block_spare_sz * write_cnt, 1, fp)) {
+				perror("\nfwrite");
+
+				if (!tries)
+					goto backup_fail;
+
+				printf("Trying again in a bit. %i attempts remaining.\n", --tries);
+				usleep(3e+6);
+			}
 		}
-#else
-		if (SYS_ResetButtonDown())
-			break;
 #endif
+
+		input_scan();
+		int read_exit = input_read(INPUT_START | INPUT_EJECT);
+		if (want_exit && read_exit) {
+			puts("Operation cancelled by user.");
+			break;
+		}
+
+		want_exit = read_exit;
 	}
 
 #ifndef NANDDUMPER_READ_TEST
 	memcpy(buffer, &keys, sizeof keys);
 	Sha_Update(&sha, buffer, sizeof keys);
+	Sha_Finish(&sha, hash);
+
 	fwrite(buffer, sizeof keys, 1, fp);
 	fclose(fp);
-	fp = NULL;
-#endif
 
-	Sha_Finish(&sha, hash);
-#ifndef NANDDUMPER_READ_TEST
 	printf("\n\nFinal SHA1 hash: %08x%08x%08x%08x%08x\n", hash[0], hash[1], hash[2], hash[3], hash[4]);
 	{
-		char* sha_path = alloca(strlen(nand_path) + 6);
+		char* sha_path = alloca(strlen(nand_path) + 16);
 		strcpy(sha_path, nand_path);
 		strcat(sha_path, ".sha1");
 		FILE* fp_sha = fopen(sha_path, "wb");
@@ -390,17 +397,34 @@ int do_nand_backup(
 			fwrite(hash, sizeof hash, 1, fp_sha);
 			fclose(fp_sha);
 		}
+
+		const char* ptr_fname = strrchr(nand_path, '/');
+		if (!ptr_fname++) ptr_fname = nand_path;
+
+		strcpy(sha_path + (ptr_fname - nand_path), "sha1sums.txt");
+		fp_sha = fopen(sha_path, "a");
+		if (!fp_sha) {
+			perror(sha_path);
+		} else {
+			fprintf(fp_sha, "%08x%08x%08x%08x%08x *%s\n", hash[0], hash[1], hash[2], hash[3], hash[4], ptr_fname);
+			fclose(fp_sha);
+		}
 	}
 #endif
 
-	printf("Time elapsed: %.3fs\n", diff_msec(start, gettime()) / 1000.0f);
+	printf("Time elapsed: %.3fs\n", diff_msec(start, gettime()) / 1.0e+3);
 out:
 	IOS_Close(fd);
 	free(buffer);
-#ifndef NANDDUMPER_READ_TEST
-	if (fp) fclose(fp);
-#endif
 	return ret;
+
+#ifndef NANDDUMPER_READ_TEST
+backup_fail:
+	printf("Deleting %s. Sorry.\n", nand_path);
+	fclose(fp);
+	remove(nand_path);
+	goto out;
+#endif
 }
 
 void CryptSettingTxt(const char* in, char* out)
@@ -500,8 +524,10 @@ int main(int argc, char **argv) {
 			CryptSettingTxt(settingbuf, settingbuf);
 
 			if (GetSettingValue(settingbuf, "MODEL", model, sizeof model) && !IS_WIIU) {
-				if (memcmp(model, "RVT", 3) == 0)
-					type = "NDEV";
+				if (memcmp(model, "RVD", 3) == 0)
+					type = "NDEV 2.x";
+				else if (memcmp(model, "RVT", 3) == 0)
+					type = "NDEV 1.x/RVA(!?)";
 				else if (memcmp(model, "RVL-001", 7) == 0)
 					type = "Wii";
 				else if (memcmp(model, "RVL-101", 7) == 0)
@@ -594,7 +620,6 @@ int main(int argc, char **argv) {
 				break;
 			}
 		}
-		input_shutdown();
 
 		putchar('\n');
 		putchar('\n');
@@ -607,8 +632,8 @@ int main(int argc, char **argv) {
 
 	char paths[2][128];
 	serial[slen] = '\0';
-	// ehh, why was i numbering the keys file
-	sprintf(paths[1], "%s:" BACKUP_DIR "/%s_%s_keys.bin", dev->name, datestr, serial);
+	// ehh, why was i numbering the keys file // why was i dating it as well ....
+	sprintf(paths[1], "%s:" BACKUP_DIR "/%s_keys.bin", dev->name, serial);
 	for (char *base = paths[1], *ptr = base; (ptr = strchr(ptr, '/')) != NULL; ptr++)
 	{
 		*ptr = 0;
@@ -631,7 +656,7 @@ int main(int argc, char **argv) {
 
 	puts("Start the NAND backup now?");
 	puts("Press HOME/START/EJECT to cancel. Press any other button to continue.\n");
-	usleep(10000);
+	usleep(100000);
 	if (input_wait(0) & (INPUT_START | INPUT_EJECT))
 		goto out_nowait;
 
