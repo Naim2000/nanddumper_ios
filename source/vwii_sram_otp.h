@@ -1,7 +1,8 @@
 #ifndef __VWII_SRAM_OTP_H__
 #define __VWII_SRAM_OTP_H__
 
-#define SRAM_OTP_SIZE 0x80
+// #define SRAM_OTP_MIRR   0xD407F00
+// #define SRAM_OTP_SIZE   0x80
 
 typedef struct {
     u32 ms_id; // 0x00000002
@@ -13,6 +14,8 @@ typedef struct {
     u8 nss_device_cert[32];
 } vwii_sram_otp_t;
 
-u16 vwii_sram_otp_read(void *dst, u16 offset, u16 size);
+static const vwii_sram_otp_t* const vwii_sram_otp = (const vwii_sram_otp_t *)0xCD407F00;
+
+// u16 vwii_sram_otp_read(void *dst, u16 offset, u16 size);
 
 #endif /* __VWII_SRAM_OTP_H__ */
