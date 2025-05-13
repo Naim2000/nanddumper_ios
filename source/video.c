@@ -20,6 +20,7 @@ void init_video() {
 
 	// setup view size
 	VIDEO_GetPreferredMode(&vmode);
+/*
 	vmode.viWidth = 672;
 
 	// set correct middlepoint of the screen
@@ -31,15 +32,18 @@ void init_video() {
 		vmode.viXOrigin = (VI_MAX_WIDTH_NTSC - vmode.viWidth) / 2;
 		vmode.viYOrigin = (VI_MAX_HEIGHT_NTSC - vmode.viHeight) / 2;
 	}
-
-	size_t fbSize = __builtin_align_up(VIDEO_GetFrameBufferSize(&vmode), 0x20);
-	xfb = aligned_alloc(0x20, fbSize);
-	DCInvalidateRange(xfb, fbSize);
-	xfb = (void*)((uintptr_t)xfb | SYS_BASE_UNCACHED);
+*/
+	xfb = MEM_K0_TO_K1(aligned_alloc(0x20, VIDEO_GetFrameBufferSize(&vmode)));
 
 	VIDEO_SetBlack(true);
 	VIDEO_Configure(&vmode);
 	VIDEO_Flush();
+	VIDEO_WaitVSync();
+	VIDEO_ClearFrameBuffer(&vmode, xfb, COLOR_BLACK);
+	VIDEO_SetNextFramebuffer(xfb);
+	VIDEO_SetBlack(false);
+	VIDEO_Flush();
+	VIDEO_WaitVSync();
 	VIDEO_WaitVSync();
 
 	// Initialise the console
@@ -48,13 +52,6 @@ void init_video() {
 					   CONSOLE_WIDTH, CONSOLE_HEIGHT);
 	CON_GetMetrics(&conX, &conY);
 
-	VIDEO_ClearFrameBuffer(&vmode, xfb, COLOR_BLACK);
-	VIDEO_SetNextFramebuffer(xfb);
-	VIDEO_SetBlack(false);
-	VIDEO_Flush();
-	VIDEO_WaitVSync();
-	if (vmode.viTVMode & VI_NON_INTERLACE)
-		VIDEO_WaitVSync();
 }
 
 void clear() {

@@ -192,10 +192,8 @@ int do_nand_backup(
 	int ret, fd;
 	FlashSizeInfo nandsize = {};
 	unsigned int buffer_cnt = 8;
-	unsigned int page_spare_sz, pages_per_block, block_spare_sz, n_blocks, buffer_sz, file_sz;
+	unsigned int page_spare_sz, pages_per_block, block_spare_sz, n_blocks, buffer_sz;
 	unsigned char *buffer = NULL;
-	ShaContext sha = {};
-	uint32_t hash[5] = {};
 	KeysBin keys = {};
 
 	strcpy(keys.comment, comment);
@@ -220,14 +218,15 @@ int do_nand_backup(
 	FILE* fp = NULL;
 	fp = fopen(keys_path, "wb");
 	if (!fp) {
-		perror(keys_path);
+		perror("fopen(keys.bin)");
 		return -errno;
 	}
 
 	ret = fwrite(&keys, sizeof keys, 1, fp);
 	fclose(fp);
+	fp = NULL;
 	if (!ret) {
-		perror(keys_path);
+		perror("fwrite(keys.bin)");
 		return -errno;
 	}
 #endif
@@ -259,7 +258,6 @@ int do_nand_backup(
 	block_spare_sz  = page_spare_sz << pages_per_block;
 	n_blocks        = 1 << (nandsize.nand_size - nandsize.block_size);
 	buffer_sz       = block_spare_sz * buffer_cnt;
-	file_sz         = block_spare_sz * n_blocks;
 
 	buffer = aligned_alloc(0x40, buffer_sz);
 	if (!buffer) {
@@ -274,6 +272,7 @@ int do_nand_backup(
 		return -errno;
 	}
 
+	unsigned int file_sz = block_spare_sz * n_blocks;
 	if ((fs.f_bsize * fs.f_bfree) <= file_sz) {
 		printf("Not enough space available on %.*s\n", strcspn(nand_path, "/"), nand_path);
 		printf("At least %uMiB free space is required!\n", file_sz >> 20);
@@ -282,32 +281,35 @@ int do_nand_backup(
 
 	fp = fopen(nand_path, "wb");
 	if (!fp) {
-		perror(nand_path);
+		perror("fopen");
 		goto out;
 	}
 
 	if (fseek(fp, file_sz, SEEK_SET) < 0) {
 		perror("fseek");
-		goto backup_fail;
+		goto cancel_backup;
 	}
 
 	if (!fwrite(&keys, sizeof keys, 1, fp) /* force expand the file(?) */) {
 		perror("fwrite");
-		goto backup_fail;
+		goto cancel_backup;
 	}
 
 	fseek(fp, 0, SEEK_SET);
+
+	ShaContext sha = {};
+	uint32_t hash[5] = {};
 	Sha_Init(&sha);
 
 #endif
+	uint64_t want_exit_time = 0;
+	uint64_t start = gettime();
 	puts("Press (hold?) HOME/START/EJECT to stop.");
 
-	int want_exit = 0;
-	uint64_t start = gettime();
 	for (unsigned int i = 0; i < n_blocks; i++) {
 		unsigned char *ptr_block = buffer + ((i % buffer_cnt) * block_spare_sz);
 
-		printf("\rBlock progress: [ %i/%i ] | %.3fs   ", i + 1, n_blocks, diff_msec(start, gettime()) / 1000.f);
+		printf("\rBlock progress: [ %i/%i ] | %.3fs   ", i + 1, n_blocks, diff_msec(start, gettime()) / 1.0e+3);
 
 		IOS_Seek(fd, i << pages_per_block, SEEK_SET);
 		ret = IOS_Ioctl(fd, 4, NULL, 0, NULL, 0);
@@ -350,31 +352,39 @@ int do_nand_backup(
 
 skip_read:
 #ifndef NANDDUMPER_READ_TEST
+		Sha_Update(&sha, ptr_block, block_spare_sz);
 		unsigned write_cnt = (i % buffer_cnt) + 1;
 		if (write_cnt == buffer_cnt || i + 1 >= n_blocks) {
-			Sha_Update(&sha, ptr_block, block_spare_sz * write_cnt);
 			// Time to write
-			int tries = 3;
+			int tries = 0, max = 3;
 			while (!fwrite(buffer, block_spare_sz * write_cnt, 1, fp)) {
 				perror("\nfwrite");
 
-				if (!tries)
-					goto backup_fail;
+				if (tries >= max)
+					goto cancel_backup;
 
-				printf("Trying again in a bit. %i attempts remaining.\n", --tries);
+				printf("Trying again in a bit. (try %i/%i)\n", ++tries, max);
 				usleep(3e+6);
 			}
 		}
 #endif
 
 		input_scan();
-		int read_exit = input_read(INPUT_START | INPUT_EJECT);
-		if (want_exit && read_exit) {
-			puts("Operation cancelled by user.");
-			break;
+		if (input_read(INPUT_START | INPUT_EJECT)) {
+			// Time to exit
+#ifdef NANDDUMPER_READ_TEST
+			goto cancel_backup;
+#else
+			uint64_t time_now = gettime();
+			unsigned int time_diff = diff_sec(want_exit_time, time_now);
+			if ((time_diff - 1) <= 14)
+				goto cancel_backup;
+
+			puts("Press that again in 1~15s");
+			want_exit_time = time_now;
+#endif
 		}
 
-		want_exit = read_exit;
 	}
 
 #ifndef NANDDUMPER_READ_TEST
@@ -392,7 +402,7 @@ skip_read:
 		strcat(sha_path, ".sha1");
 		FILE* fp_sha = fopen(sha_path, "wb");
 		if (!fp_sha) {
-			perror(sha_path);
+			perror("fopen(.sha1)");
 		} else {
 			fwrite(hash, sizeof hash, 1, fp_sha);
 			fclose(fp_sha);
@@ -404,7 +414,7 @@ skip_read:
 		strcpy(sha_path + (ptr_fname - nand_path), "sha1sums.txt");
 		fp_sha = fopen(sha_path, "a");
 		if (!fp_sha) {
-			perror(sha_path);
+			perror("fopen(sha1sums.txt)");
 		} else {
 			fprintf(fp_sha, "%08x%08x%08x%08x%08x *%s\n", hash[0], hash[1], hash[2], hash[3], hash[4], ptr_fname);
 			fclose(fp_sha);
@@ -418,13 +428,13 @@ out:
 	free(buffer);
 	return ret;
 
+cancel_backup:
 #ifndef NANDDUMPER_READ_TEST
-backup_fail:
 	printf("Deleting %s. Sorry.\n", nand_path);
 	fclose(fp);
 	remove(nand_path);
-	goto out;
 #endif
+	goto out;
 }
 
 void CryptSettingTxt(const char* in, char* out)
@@ -656,7 +666,7 @@ int main(int argc, char **argv) {
 
 	puts("Start the NAND backup now?");
 	puts("Press HOME/START/EJECT to cancel. Press any other button to continue.\n");
-	usleep(100000);
+	usleep(1e+5);
 	if (input_wait(0) & (INPUT_START | INPUT_EJECT))
 		goto out_nowait;
 
@@ -669,8 +679,8 @@ int main(int argc, char **argv) {
 out:
 	puts("Press any button to exit.");
 	input_wait(0);
-out_nowait:
 #ifndef NANDDUMPER_READ_TEST
+out_nowait:
 	FATUnmount();
 #endif
 	input_shutdown();
