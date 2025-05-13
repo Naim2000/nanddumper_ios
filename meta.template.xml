@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<app version="1">
+	<name>nanddumper@IOS</name>
+	<version>%NANDDUMPER_REVISION%</version>
+	<release_date>%NANDDUMPER_BUILDDATE%</release_date>
+	<coder>thepikachugamer</coder>
+	<short_description>NAND dumper</short_description>
+	<long_description>A Real 1:1 Wii NAND Dumper 2: Future Legend of Rhythm Alien
+
++ Uses BootMii NAND dump format
++ SD &amp; USB support
++ No patched IOS required
++ Hell, no Homebrew Channel required. Go run this through Wilbrand or something
++ Also pretty fast. Takes like 4~5 minutes
+
+Props to these people:
+
+{ DacoTaco }
+Invited me to the IOS Ghidra server. This app could not exist without this. Thank you thank you thank you. Oh and you're welcome too
+Also made Priiloader. Please make sure you have Priiloader installed it has like no downsides. It's 2025 please
+
+{ mkwcat }
+Discovered /dev/sha exploit in it's entirety. Did you say INSTANT ACE that works on EVERY IOS* on EVERY PLATFORM!?!?!?
+
+{ emilydaemon }
+Voluntary graphics designer (again!? See cdbackup icon)
+
+{ XFlak }
+Tester (USB flash drives). Excellent at spreading positive energy. Also creator of ModMii. Please check it out
+
+{ DeadlyFoez }
+Tester (tons of older/not-so standard IOS). See beta3 changelog. Multithreading will happen one day...
+
+[ nickle241 ]
+Tester (128M "dev" IOS). No Homebrew Channel was installed in the process of dumping this devkit NAND. :D
+
+[ playerjmr ]
+Tester (Wii Mini, USB hard drive (which failed??)).
+
+[ ypoa ]
+Tester (Wii U, USB flash drives). Fakesigned NAND dump lol
+
+[ Aeplexi ]
+Tester (USB hard drives). Suggester of /wii/backups folder. Idk why I wanted /private/wii/backups first.
+
+I feel that I missed a tester or 2 here. Please don't feel left out though.
+
+Source code:
+https://github.com/Naim2000/nanddumper_ios
+
+By all means please. Report any issues you get. Freeze, crash, some weird error, how you got any of those three, if it's consistent idk. Just tell me as much as you can about it.
+
+P.S. ios cat is in ur wiiz wutchin ur isoz (mkwcat (&lt;3))
+</long_description>
+</app>

@@ -30,17 +30,6 @@ CXXFLAGS	=	$(CFLAGS)
 
 LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 
-ifeq ($(READ_TEST), 1)
-	BUILD := $(BUILD)_readtest
-	TARGET := $(TARGET)_readtest
-	CFLAGS += -DNANDDUMPER_READ_TEST
-endif
-
-ifdef FORCE_IOS
-	BUILD := $(BUILD)_ios$(FORCE_IOS)
-	TARGET := $(TARGET)_ios$(FORCE_IOS)
-	CFLAGS += -DNANDDUMPER_FORCE_IOS=$(FORCE_IOS)
-endif
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
@@ -52,6 +41,17 @@ LIBS	:=	-lwiiuse -lbte -lfat -logc -lm
 #---------------------------------------------------------------------------------
 LIBDIRS	:=
 
+ifneq ($(READ_TEST),)
+	BUILD := $(BUILD)_readtest
+	TARGET := $(TARGET)_readtest
+	CFLAGS += -DNANDDUMPER_READ_TEST
+endif
+
+ifdef FORCE_IOS
+	BUILD := $(BUILD)_ios$(FORCE_IOS)
+	TARGET := $(TARGET)_ios$(FORCE_IOS)
+	CFLAGS += -DNANDDUMPER_FORCE_IOS=$(FORCE_IOS)
+endif
 #---------------------------------------------------------------------------------
 # no real need to edit anything past this point unless you need to add additional
 # rules for different file extensions
@@ -119,6 +119,18 @@ clean:
 #---------------------------------------------------------------------------------
 run:
 	wiiload $(TARGET).dol
+
+#---------------------------------------------------------------------------------
+release: clean $(BUILD)
+	@rm -rf apps
+	@mkdir -p apps/$(TARGET)
+	@cp $(TARGET).dol apps/$(TARGET)/boot.dol
+	@cp $(TARGET).elf apps/$(TARGET)/
+	@sed -e 's/%NANDDUMPER_REVISION%/$(REVISION)/g' -e 's/%NANDDUMPER_BUILDDATE%/$(shell date '+%Y%m%d%H%M%S')/g' meta.template.xml > apps/$(TARGET)/meta.xml
+	@cp icon.png apps/$(TARGET)
+	@echo Creating $(TARGET).zip for $(REVISION)
+	zip -r $(TARGET).zip apps
+	@rm -r apps
 
 
 #---------------------------------------------------------------------------------
