@@ -13,6 +13,8 @@ static GXRModeObj vmode = {};
 
 int conX, conY;
 
+/* I feed like I need to make a change or 2 to this. */
+
 // from LoadPriiloader
 __attribute__((constructor))
 void init_video() {
@@ -20,7 +22,7 @@ void init_video() {
 
 	// setup view size
 	VIDEO_GetPreferredMode(&vmode);
-/*
+
 	vmode.viWidth = 672;
 
 	// set correct middlepoint of the screen
@@ -32,7 +34,7 @@ void init_video() {
 		vmode.viXOrigin = (VI_MAX_WIDTH_NTSC - vmode.viWidth) / 2;
 		vmode.viYOrigin = (VI_MAX_HEIGHT_NTSC - vmode.viHeight) / 2;
 	}
-*/
+
 	xfb = MEM_K0_TO_K1(aligned_alloc(0x20, VIDEO_GetFrameBufferSize(&vmode)));
 
 	VIDEO_SetBlack(true);

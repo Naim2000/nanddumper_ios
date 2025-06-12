@@ -5,7 +5,7 @@ int Sha_Init(ShaContext* ctx) {
 	ioctlv vectors[3] = {};
 
 	vectors[1].data = ctx;
-	if ((uintptr_t)ctx < 0xFFFE0000)
+	if ((uintptr_t)ctx < 0xFFF00000)
 		vectors[1].len  = sizeof *ctx;
 
 	return IOS_Ioctlv(0x10001, 0, 1, 2, vectors);

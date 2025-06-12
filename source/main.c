@@ -14,7 +14,6 @@
 #include <ogc/ios.h>
 #include <ogc/ipc.h>
 #include <ogc/es.h>
-
 #ifndef NANDDUMPER_READ_TEST
 #include <fat.h>
 #endif
@@ -29,12 +28,12 @@
 #include "otp.h"
 #include "mini_seeprom.h"
 #include "vwii_sram_otp.h"
-#include "realcode_bin.h"
 #include "stage0_bin.h"
+#include "stage1_bin.h"
+#include "realcode_bin.h"
 
 #define STR(X) __stringify(X)
 
-#define HW_AHBPROT		0x0D800064
 #define MEM2_PROT		0x0D8B420A
 #define LT_CHIPREVID	0x0D8005A0
 #define IS_WIIU			((read32(LT_CHIPREVID) & 0xFFFF0000) == 0xCAFE0000)
@@ -62,7 +61,6 @@ typedef struct KeysBin {
 CHECK_STRUCT_SIZE(KeysBin, 0x400);
 
 #if 0
-
 typedef struct IOS_Context {
 	uint32_t cpsr;
 	union {
@@ -122,14 +120,23 @@ static void print_thread(int i) {
  * https://github.com/mkw-sp/mkw-sp/blob/main/common/IOS.cc#L192
  * thank you mkwcat (<3)
  */
+
+static int threadid;
 int do_sha_exploit(const void* entry, bool thumb, void* sp, unsigned stack_size, uint32_t argument) {
-	uint32_t* mem1 = (uint32_t *)0x80000000;
 	const uint32_t* stage0 = (uint32_t *)stage0_bin;
+	const uint32_t* stage1 = (uint32_t *)stage1_bin;
 
-	int threadid = 0;
+	static uint32_t* stage1a = NULL;
+	if (!stage1a) {
+		stage1a = malloc(stage1_bin_size);
+		if (!stage1a) {
+			printf("memory allocation failed, why? (stage1.bin size=%#x)\n", stage1_bin_size);
+			return -1;
+		}
+	}
 
-	for (int i = 0; i < stage0_bin_size / 4; i++) {
-		uint32_t v = stage0[i];
+	for (int i = 0; i < stage1_bin_size / 4; i++) {
+		uint32_t v = stage1[i];
 		if (v == 0x70696B61) // entrypoint
 			v = MEM_VIRTUAL_TO_PHYSICAL(entry) | thumb;
 		else if (v == 0x5555AAAA) // argument
@@ -141,32 +148,54 @@ int do_sha_exploit(const void* entry, bool thumb, void* sp, unsigned stack_size,
 		else if (v == 0x67452301) // threadid
 			v = MEM_VIRTUAL_TO_PHYSICAL(&threadid);
 
+		stage1a[i] = v;
+	}
+
+	uint32_t* mem1 = (uint32_t *)0x80000000;
+
+	for (int i = 0; i < stage0_bin_size / 4; i++) {
+		uint32_t v = stage0[i];
+		if (v == 0x55555555) // entrypoint
+			v = MEM_VIRTUAL_TO_PHYSICAL(stage1a) | 1; // thumb
+
 		mem1[i] = v;
 	}
 
 	IOS_Write(-1, mem1, stage0_bin_size);
+	IOS_Write(-1, stage1a, stage1_bin_size);
+
+	write32((uintptr_t)&threadid, 0);
 	int ret = Sha_Init((void *)0xFFFE0028);
 	if (ret == 0) {
-		// uint64_t time = gettime();
-		int timer = 500;
+		uint64_t time = gettime();
+		int wait_ms = 15e+3;
+		int ms = 0;
+
 		while (!(ret = read32((uintptr_t)&threadid))) {
-			usleep(1000);
-			if (!timer--) {
-				puts("timeout while waiting on IOS thread to spawn");
+			// usleep(1000);
+			ms = diff_msec(time, gettime());
+			if (ms >= wait_ms) {
+				printf("timeout while waiting on IOS thread to spawn (%ums)\n", wait_ms);
 				return -1;
 			}
 		}
-		// printf("thread spawned in %ums\n", diff_msec(time, gettime()));
 	}
 
 	return ret;
 }
 
 int patch_flash_access() {
+	/*
+	 * Three things can happen here.
+	 * >= 0: /dev/flash access is enabled.
+	 * -6:   /dev/flash access is disabled, the IOS does not check for flash.
+	 * -106: /dev/flash access is disabled, but the IOS does check for flash.
+	 *
+	 * Honestly, I'm not sure why they didn't hit the -6 as soon as the strncmp with /dev/ succeeded. Who is creating files under such a directory?
+	 */
 	int fd = IOS_Open("/dev/flash", 0);
 	if (fd >= 0) {
-		if (IOS_GetVersion() != 246)
-			puts("(/dev/flash is already accessible, how?)");
+		puts("(/dev/flash is already accessible, how?)");
 
 		IOS_Close(fd);
 		return 0;
@@ -179,9 +208,10 @@ int patch_flash_access() {
 		return haxxfd;
 	}
 
-	inbuf[0] = 0x20000000;
+	uint32_t fs_text_va = inbuf[0] = 0x20000000;
 	IOS_Ioctl(haxxfd, 0, inbuf, 4, outbuf, 4);
 	void* fs_text = MEM_PHYSICAL_TO_K0(outbuf[0]);
+	DCInvalidateRange(fs_text, 0x8000);
 
 	static const uint16_t patternA[] = { // new
 		0x2300, // mov r3, #0
@@ -233,27 +263,43 @@ int patch_flash_access() {
 	}
 	pc += 6;
 
-	char* thestring = memmem(fs_text, 0x8000, "\0boot2", sizeof("\0boot2"));
-	if (!thestring++) {
-		puts("Could not find the string");
-		return -3;
+	char* thestring = NULL;
+	if (fd == -6) {
+		thestring = memmem(fs_text, 0x8000, (const char[9]){"\0boot2"}, 8);
+		if (!thestring++) {
+			puts("Could not find the string");
+			return -3;
+		}
+
+		strcpy(thestring, "flash");
+	} else if (fd == -106) {
+		thestring = memmem(fs_text, 0x8000, (const char[16]){"flash\0\0\0boot2"}, 16);
+		if (!thestring) {
+			puts("Could not find the string");
+			return -4;
+		}
+
+		strcpy(thestring + 0, "boot2");
+		strcpy(thestring + 8, "flash");
+	} else {
+		printf("IOS_Open(/dev/flash) wasn't supposed to work, but it wasn't supposed to return %i...\n", fd);
+		return fd;
 	}
+
 
 	dst = FS_OpenFlash - (pc + 2);
 	pc[0] = 0xF000 | ((dst >> 11) & 0x7FF);
 	pc[1] = 0xF800 | (dst & 0x7FF);
 	DCFlushRange(pc, 4);
 
-	strcpy(thestring, "flash");
-	DCFlushRange(thestring, 8);
-
 	// invalidate icache
 	inbuf[0] = MEM_VIRTUAL_TO_PHYSICAL(pc);
 	IOS_Ioctl(haxxfd, 1, inbuf, 4, 0, 0);
 
 	// invalidate dcache
-	inbuf[0] = MEM_VIRTUAL_TO_PHYSICAL(fs_text);
-	inbuf[1] = 0x8000;
+	DCFlushRange(thestring, 32);
+	inbuf[0] = fs_text_va + (thestring - (char *)fs_text);
+	inbuf[1] = 32;
 	IOS_Ioctl(haxxfd, 2, inbuf, 8, 0, 0);
 
 	// Restore.
@@ -394,7 +440,7 @@ int do_nand_backup()
 	for (unsigned int i = 0; i < n_blocks; i++) {
 		unsigned char *ptr_block = buffer + ((i % buffer_cnt) * block_spare_sz);
 
-		if (diff_msec(lastupdate, gettime()) >= 250 || (i + 1) == n_blocks) {
+		if (diff_msec(lastupdate, gettime()) >= 200 || (i + 1) == n_blocks) {
 			lastupdate = gettime();
 
 			// int barwidth = conX - (5 /* ___% */ + 2 /* [] */ + 1 /* to avoid new line lol */);
@@ -417,9 +463,9 @@ int do_nand_backup()
 			// FS checks this in the first 2 pages of a block
 			if (j < 2) {
 				uint8_t check_byte = ptr_page[(1 << nandsize.page_size) + nandsize.check_byte_ofs];
-				if ((ret == page_spare_sz || ret == -11 || ret == -12) && check_byte != 0xFF) {
+				if ((ret == page_spare_sz || ret == -12) && check_byte != 0xFF) {
 					clearln();
-					printf("Block %u: Marked as bad (%u, %02hhX)\n", i, j, check_byte);
+					printf("Block %u: Marked as bad\n", i);
 					memset(ptr_block, 0, block_spare_sz);
 					break;
 				}
@@ -487,6 +533,7 @@ int do_nand_backup()
 		if (input_read(INPUT_START | INPUT_EJECT)) {
 			// Time to exit
 #ifdef NANDDUMPER_READ_TEST
+			clearln();
 			goto cancel_backup;
 #else
 			uint64_t time_now = gettime();
@@ -556,6 +603,85 @@ cancel_backup:
 	goto out;
 }
 
+int load_startup_ios(void) {
+#ifdef NANDDUMPER_FORCE_IOS
+	int versions[] = { NANDDUMPER_FORCE_IOS, 0 };
+#else
+	// Both have EHCI (USB 2.0).
+	int versions[] = { 59, 58, 0 };
+#endif
+
+	int target = IOS_GetVersion();
+
+	for (int *i = versions; *i; i++) {
+		uint64_t tid = 0x0000000100000000 | *i;
+		uint32_t x;
+		// The older IOSes only have the TMD view functions. Be nice.
+		if (ES_GetTMDViewSize(tid, &x) == 0 && x != offsetof(tmd_view, contents[3]) // 3 contents is a stub. stubs still have FS, so maaaybe we can work with them, but they have no ES, so we can't leave. Not normally, anyways.
+		&&	ES_GetNumTicketViews(tid, &x) == 0 && x == 1) {
+			target = *i;
+			break;
+		}
+	}
+
+	return IOS_ReloadIOS(target);
+}
+
+#define CASE_CONSOLE_MODEL(model, len, v, name) \
+	if (memcmp(model, v, sizeof(v) - 1) == 0) \
+		return name;
+
+static const char* get_console_type(char model[16]) {
+	strcpy(model, "UNKNOWN");
+	int ret = __CONF_GetTxt("MODEL", model, 16); // pointer, cannot use sizeof. [16] is really just a hint
+
+	if (IS_WIIU) {
+		return "vWii (Wii U)";
+	}
+	else if (ret > 0) {
+		CASE_CONSOLE_MODEL(model, ret, "RVD", "NDEV 2.x");
+		CASE_CONSOLE_MODEL(model, ret, "RVT", "NDEV 1.x/Revolution Arcade(!?)");
+		CASE_CONSOLE_MODEL(model, ret, "RVL-001", "Wii");
+		CASE_CONSOLE_MODEL(model, ret, "RVL-101", "Wii Family Edition");
+		CASE_CONSOLE_MODEL(model, ret, "RVL-201", "Wii Mini");
+	}
+
+	return "UNKNOWN";
+}
+#undef CASE_CONSOLE_MODEL
+
+static const char* get_serial_number(char serial[24]) {
+	char code[4], serno[12];
+
+	strcpy(serial, "UNKNOWN");
+	if (__CONF_GetTxt("CODE", code, sizeof code) > 0 && __CONF_GetTxt("SERNO", serno, sizeof serno) > 0) {
+		snprintf(serial, 24, "%s%s", code, serno);
+
+		/* https://3dbrew.org/wiki/Serials */
+		int i, check = 0;
+		for (i = 0; i < 8; i++) {
+			uint8_t digit = serno[i] - '0';
+			if (digit >= 10) {
+				printf("\x1b[30;1m" "invalid serial 'number' %s" "\x1b[39m\n", serial);
+				break;
+			}
+
+			if (i & 1) // odd position
+				digit += (digit << 1); // * 3
+
+			check += digit;
+		}
+		if (i == 8) {
+			check = (10 - (check % 10)) % 10;
+			if (serno[i] - '0' != check)
+				printf("\x1b[30;1m" "invalid serial number %s" "\x1b[39m\n", serial);
+		}
+	}
+
+	return serial;
+}
+
+
 #define BACKUP_DIR "/wii/backups"
 int main(void) {
 	__exception_setreload(30);
@@ -566,20 +692,15 @@ int main(void) {
 	puts("nanddumper@IOS " STR(NANDDUMPER_REVISION) " by thepikachugamer");
 #endif
 
-#ifdef NANDDUMPER_FORCE_IOS
-	IOS_ReloadIOS(NANDDUMPER_FORCE_IOS);
-#else
-	IOS_ReloadIOS(IOS_GetVersion());
-#endif
-	// branch galore
+	load_startup_ios();
 	printf("running on IOS%uv%u (v%u.%u)\n\n", IOS_GetVersion(), IOS_GetRevision(), IOS_GetRevisionMajor(), IOS_GetRevisionMinor());
-	usleep(1e+4);
-
 	input_init();
 
-	void* sp = (void *)0x90100000;
+	static unsigned char realcode_stack[0x1000] [[gnu::aligned(0x20)]]; // We don't quite need to align this to 32 bytes actually. Just feels nice sometimes.
+	memset(realcode_stack, 0x5A, sizeof realcode_stack);
+	DCFlushRange(realcode_stack, sizeof realcode_stack);
 
-	int ret = do_sha_exploit(realcode_bin, false, sp, 0x1000, 0);
+	int ret = do_sha_exploit(realcode_bin, false, realcode_stack + sizeof(realcode_stack), sizeof(realcode_stack), 0);
 	if (ret < 0) {
 		print_error("do_sha_exploit", ret);
 		goto out;
@@ -588,7 +709,7 @@ int main(void) {
 	// wait for our device to appear
 	{
 		int fd = -1, timer = 100;
-		while ((ret = fd = IOS_Open("/dev/realcode", 0)) == -6) {
+		while ((fd = IOS_Open("/dev/realcode", 0)) == IPC_ENOENT) {
 			usleep(100);
 			if (!timer--) {
 				break;
@@ -603,66 +724,23 @@ int main(void) {
 		IOS_Close(fd);
 	}
 
+	uint32_t    device_id = 0xFFFFFFFF;
+	char        model[16], serial[24];
+	const char* type = get_console_type(model);
+
+	ES_GetDeviceID(&device_id);
+	printf(
+		"Console model: %s [%s]\n"
+		"Console ID:    %08x\n"
+		"Serial number: %s\n\n", type, model, device_id, get_serial_number(serial)
+	);
+
 	write16(MEM2_PROT, false);
 	ret = patch_flash_access();
 	if (ret < 0)
 		goto out;
 
-
 #ifndef NANDDUMPER_READ_TEST
-	uint32_t    device_id = 0xFFFFFFFF;
-	char        code[4];
-	char        serno[10];
-	char        serial[20] = "UNKNOWN";
-	char        model[16]  = "UNKNOWN";
-	const char *type = IS_WIIU ? "vWii (Wii U)" : "Wii/Wii Mini";
-	char        comment[256];
-
-	otp_read(9, 1, &device_id);
-
-	/* get the serial... */
-	if (!IS_WIIU && __CONF_GetTxt("MODEL", model, sizeof model) > 0) {
-		if (memcmp(model, "RVD", 3) == 0)
-			type = "NDEV 2.x";
-		else if (memcmp(model, "RVT", 3) == 0)
-			type = "NDEV 1.x/Revolution Arcade(!?)";
-		else if (memcmp(model, "RVL-001", 7) == 0)
-			type = "Wii";
-		else if (memcmp(model, "RVL-101", 7) == 0)
-			type = "Wii Family Edition";
-		else if (memcmp(model, "RVL-201", 7) == 0)
-			type = "Wii Mini";
-	}
-
-	if (__CONF_GetTxt("CODE", code, sizeof code) > 0 &&  __CONF_GetTxt("SERNO", serno, sizeof serno) > 0) {
-		snprintf(serial, sizeof serial, "%s%s", code, serno);
-
-		int i, check = 0;
-		for (i = 0; i < 8; i++) {
-			uint8_t digit = serno[i] - '0';
-			if (digit >= 10) {
-				strcat(serial, " (?\?)");
-				break;
-			}
-
-			if (i & 1)
-				digit += (digit << 1);
-
-			check += digit;
-		}
-		if (i == 8) {
-			check = (10 - (check % 10)) % 10;
-			if (serno[i] - '0' != check)
-				strcat(serial, " (?)");
-		}
-	}
-
-	printf(
-		"Console model: %s [%s]\n"
-		"Console ID:    %08x\n"
-		"Serial number: %s\n\n", type, model, device_id, serial
-	);
-
 	/* get the time... */
 	time_t tm = 0;
 	struct tm dt = {};
@@ -672,7 +750,7 @@ int main(void) {
 	localtime_r(&tm, &dt);
 	sprintf(datestr, "%02d%02d%02d", dt.tm_year - 100, dt.tm_mon + 1, dt.tm_mday);
 
-	serial[strcspn(serial, " (?)")] = '\0';
+	char comment[256];
 	snprintf(comment, sizeof comment,
 		"nanddumper@IOS by thepikachugamer\n"
 		"Console model: %s [%s]\n"
@@ -754,20 +832,17 @@ int main(void) {
 	printf("Saving to %s\n", paths[0]);
 
 	ret = do_nand_backup(paths[0], paths[1], comment);
-	goto out;
 #else
 	ret = do_nand_backup();
-	goto out;
 #endif
+out:
+	puts("Press any button to exit.");
+	input_wait(0);
+
 out_nowait:
 #ifndef NANDDUMPER_READ_TEST
 	FATUnmount();
 #endif
 	input_shutdown();
-
 	return ret;
-out:
-	puts("Press any button to exit.");
-	input_wait(0);
-	goto out_nowait;
 }

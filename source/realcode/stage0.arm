@@ -1,64 +1,12 @@
-.macro ios_syscall name num
-\name:
-	.long 0xE6000010 | (\num << 5)
-	bx lr
-.endm
-
 .thumb
 start:
-	@ Create a new thread to do this stuff.
-	ldr r0, entrypoint     @ void (*entry)()
-	ldr r1, argument       @ u32 arg
-	ldr r2, stack_pointer  @ void* stack_top
-	ldr r3, stack_size     @ u32 stack_sz
+    ldr r1, =0x10100000 @ temporary stack
+    mov sp, r1
+    ldr r1, =0x55555555 @ our entrypoint
+    blx r1
+    ldr r1, =0xFFFF0014 @ <- ldr pc, [pc, 0x20]
+    str r1, [r1, #0x20] @ usually NULL lol
+    bx  r1
 
-	@ Our SP has been ruined by /dev/sha bomb. Borrow one.
-	mov sp, r2
-	mov r4, #0x7F          @ int prio
-	str r4, [sp, #0x0]
-	mov r4, #1             @ bool detached
-	str r4, [sp, #0x4]
-
-	adr r4, IOS_CreateThread
-	blx r4
-
-	ldr r4, threadid_out
-	str r0, [r4]
-
-	@ r0 has our thread ID. We need to go and enable system mode.
-	@ Threads[threadid].userContext.cpsr |= 0x1F;
-	ldr r1, =0xFFFE0000 @ IOS_Thread threads[100]
-	mov r2, #0xB0       @ sizeof (IOS_Thread)
-	mul r2, r0
-	@ Lucky for us. `cpsr` is the very first property of the IOS_Thread structure.
-	add r1, r2
-	ldr r2, [r1]
-	mov r3, #0x1F
-	orr r2, r3
-	str r2, [r1]
-	@ r0 stil has our thread ID.
-	adr r4, IOS_StartThread
-	blx r4
-
-	@ Chill.
-
-    /* Overwrite reserved handler to loop infinitely */
-    ldr r1, =0xFFFF0014 @ ldr pc, [pc, #0x20]
-    str r1, [r1, #0x20]
-    bx r1
-
-    @adr r1, IOS_YieldThread
-    @mov lr, r1 @ this will make the function return to itself repeatedly
-    @bx  r1
-
-.arm
-ios_syscall IOS_CreateThread 0
-ios_syscall IOS_StartThread 5
-ios_syscall IOS_YieldThread 7
-
+.align 2
 .pool
-entrypoint:     .word 0x70696B61
-argument:       .word 0x5555AAAA
-stack_pointer:  .word 0x53505350
-stack_size:     .word 0x535A535A
-threadid_out:   .word 0x67452301

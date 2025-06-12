@@ -9,8 +9,6 @@
 start:
 	push    {lr}
 	sub     sp, #0x18
-	ldr     r0, =0x6E796100
-	str     r0, [sp, #0x14]
 
 	mov     r0, #0x0D800000
 	ldr     r1, [r0, #0x60] @ HW_SRNPROT
@@ -21,12 +19,6 @@ start:
 	orr     r1, #0x8000000E
 	orr     r1, #0x00000DF0
 	str     r1, [r0, #0x64]
-
-	@mov     r0, #0x0
-	@mov     r1, #0x60
-	@bl      IOS_SetThreadPriority
-	@cmp     r0, #0
-	@blt     exit
 
 	mov     r0, #0xF
 	mov     r1, #0x0
@@ -127,19 +119,16 @@ reply_message:
 	b       recv_loop
 
 destroy_mqueue:
-	mov     r6, r0
+	str     r0, [sp, #0x14]
 	mov     r0, r4
 	bl      IOS_DestroyMessageQueue
-	mov     r0, r6
+	ldr     r0, [sp, #0x14]
 
 return:
-    str     r0, [sp, #0x14]
 	add     sp, #0x18
 	pop     {r1}
 	bx      r1
 
-ios_syscall IOS_GetThreadPriority 0x8
-ios_syscall IOS_SetThreadPriority 0x9
 ios_syscall IOS_CreateMessageQueue 0xA
 ios_syscall IOS_DestroyMessageQueue 0xB
 ios_syscall IOS_ReceiveMessage 0xE
