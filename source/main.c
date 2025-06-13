@@ -608,7 +608,8 @@ int load_startup_ios(void) {
 	int versions[] = { NANDDUMPER_FORCE_IOS, 0 };
 #else
 	// Both have EHCI (USB 2.0).
-	int versions[] = { 59, 58, 0 };
+	// int versions[] = { 59, 58, 0 }; // libogc usbstorage doesn't seem to like 59?
+	int versions = { 58, 0 };
 #endif
 
 	int target = IOS_GetVersion();
