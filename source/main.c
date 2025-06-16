@@ -11,6 +11,7 @@
 #include <ogc/system.h>
 #include <ogc/cache.h>
 #include <ogc/lwp_watchdog.h>
+#include <ogc/lwp.h>
 #include <ogc/ios.h>
 #include <ogc/ipc.h>
 #include <ogc/es.h>
@@ -18,6 +19,7 @@
 #include <fat.h>
 #endif
 
+#include "config.h"
 #include "common.h"
 #include "video.h"
 #include "pad.h"
@@ -32,7 +34,13 @@
 #include "stage1_bin.h"
 #include "realcode_bin.h"
 
-#define STR(X) __stringify(X)
+#define _STR(X) #X
+#define STR(X) _STR(X)
+
+#include <ogc/libversion.h>
+#if ((_V_MAJOR_ > 2) || (_V_MINOR_ > 11) || (_V_PATCH_ > 0))
+#pragma message "Libogc updated(?). Please fix the console color printing"
+#endif
 
 #define MEM2_PROT		0x0D8B420A
 #define LT_CHIPREVID	0x0D8005A0
@@ -202,7 +210,14 @@ int patch_flash_access() {
 	}
 
 	uint32_t inbuf[4], outbuf[4];
-	int haxxfd = IOS_Open("/dev/realcode", 0);
+	int haxxfd, timer = 100;
+	do {
+		if (!timer--)
+			break;
+
+		haxxfd = IOS_Open("/dev/realcode", 0);
+	} while (haxxfd == IPC_ENOENT);
+
 	if (haxxfd < 0) {
 		print_error("IOS_Open(/dev/realcode)", haxxfd);
 		return haxxfd;
@@ -509,22 +524,6 @@ int do_nand_backup()
 			if (!fwrite(buffer, block_spare_sz * write_cnt, 1, fp)) {
 				perror("\nfwrite");
 				goto cancel_backup;
-/*
-				int wait = tries * 15;
-
-				printf("Trying again in %us. Press any button to skip wait. (try %i/%i)\n", wait, tries, max);
-				uint64_t current = gettime();
-				while (diff_sec(current, gettime()) < wait) {
-					input_scan();
-					if (input_read(0))
-						break;
-
-					// don't rush
-					usleep(1000);
-				}
-
-				puts("Trying again.");
-*/
 			}
 		}
 #endif
@@ -608,13 +607,14 @@ int load_startup_ios(void) {
 	int versions[] = { NANDDUMPER_FORCE_IOS, 0 };
 #else
 	// Both have EHCI (USB 2.0).
-	// int versions[] = { 59, 58, 0 }; // libogc usbstorage doesn't seem to like 59?
-	int versions = { 58, 0 };
+	// int versions[] = { 59, 58, 0 };
+	/* Okay, i think WFS is eating up my USB drive before I can. So, no more IOS59 */
+	uint8_t versions[] = { 58, 0 };
 #endif
 
 	int target = IOS_GetVersion();
 
-	for (int *i = versions; *i; i++) {
+	for (uint8_t *i = versions; *i; i++) {
 		uint64_t tid = 0x0000000100000000 | *i;
 		uint32_t x;
 		// The older IOSes only have the TMD view functions. Be nice.
@@ -683,7 +683,6 @@ static const char* get_serial_number(char serial[24]) {
 }
 
 
-#define BACKUP_DIR "/wii/backups"
 int main(void) {
 	__exception_setreload(30);
 
@@ -705,24 +704,6 @@ int main(void) {
 	if (ret < 0) {
 		print_error("do_sha_exploit", ret);
 		goto out;
-	}
-
-	// wait for our device to appear
-	{
-		int fd = -1, timer = 100;
-		while ((fd = IOS_Open("/dev/realcode", 0)) == IPC_ENOENT) {
-			usleep(100);
-			if (!timer--) {
-				break;
-			}
-		}
-
-		if (fd < 0) {
-			print_error("IOS_Open(/dev/realcode)", fd);
-			goto out;
-		}
-
-		IOS_Close(fd);
 	}
 
 	uint32_t    device_id = 0xFFFFFFFF;
@@ -798,6 +779,7 @@ int main(void) {
 
 	if (!dev) {
 		puts("Operation cancelled by user.");
+		fflush(stdout);
 		goto out_nowait;
 	}
 
