@@ -604,7 +604,7 @@ cancel_backup:
 
 int load_startup_ios(void) {
 #ifdef NANDDUMPER_FORCE_IOS
-	int versions[] = { NANDDUMPER_FORCE_IOS, 0 };
+	uint8_t versions[] = { NANDDUMPER_FORCE_IOS, 0 };
 #else
 	// Both have EHCI (USB 2.0).
 	// int versions[] = { 59, 58, 0 };
