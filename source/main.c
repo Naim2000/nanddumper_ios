@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -11,10 +10,10 @@
 #include <ogc/system.h>
 #include <ogc/cache.h>
 #include <ogc/lwp_watchdog.h>
-#include <ogc/lwp.h>
 #include <ogc/ios.h>
 #include <ogc/ipc.h>
 #include <ogc/es.h>
+#include <ogc/usb.h>
 #ifndef NANDDUMPER_READ_TEST
 #include <fat.h>
 #endif
@@ -694,6 +693,8 @@ int main(void) {
 
 	load_startup_ios();
 	printf("running on IOS%uv%u (v%u.%u)\n\n", IOS_GetVersion(), IOS_GetRevision(), IOS_GetRevisionMajor(), IOS_GetRevisionMinor());
+	usleep(5e+5); // chill for a bit and...
+	USB_Initialize(); // get USB up to speed, otherwise the app literally outspeeds GetDeviceChange and I get a no devices inserted. lol
 	input_init();
 
 	static unsigned char realcode_stack[0x1000] [[gnu::aligned(0x20)]]; // We don't quite need to align this to 32 bytes actually. Just feels nice sometimes.

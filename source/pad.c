@@ -1,15 +1,15 @@
 #include <stdio.h>
 #include <unistd.h>
-#include <gccore.h>
 
 #include "pad.h"
+
+static int input_initialized = 0;
 
 #define INPUT_WIIMOTE
 #define INPUT_GCN
 // #define INPUT_USB_KEYBOARD
 #define INPUT_USE_FACEBTNS
 
-static int input_initialized = 0;
 
 #ifdef INPUT_WIIMOTE
 #include <wiiuse/wpad.h>
@@ -25,12 +25,9 @@ static int input_initialized = 0;
 
 #ifdef INPUT_USE_FACEBTNS
 #include <ogc/lwp_watchdog.h>
-#include <ogc/stm.h>
 
 /* eh. we have AHB access. Lol. */
 #include <ogc/machine/processor.h>
-#define HW_GPIO_IN 0xd8000e8
-#define EJECT_BTN  (1 << 6)
 #endif
 
 #ifdef INPUT_USB_KEYBOARD
@@ -93,26 +90,86 @@ void* kbd_thread(void* userp) {
 #endif
 
 #ifdef INPUT_USE_FACEBTNS
-static uint64_t stm_lastinput;
-static uint32_t stm_input;
-void STMEventHandler(uint32_t event) {
-	uint64_t now = gettime();
+#define HW_GPIO_IN			0x0D8000E8
+#define HW_GPIO_POWER		(1 << 0)
+#define HW_GPIO_EJECT		(1 << 6)
+#if 0
+/* Eh, let's not use interrupts at all. It was nice knowing you, though */
 
-	if (diff_msec(stm_lastinput, now) < 200) {
-		// printf("stm input is too early\n");
+#define HW_PPCIRQFLAG		0x0D000030
+#define HW_PPCIRQMASK		0x0D000034
+
+#define HW_IRQ_GPIO			(1 << 11)
+#define HW_IRQ_GPIOB		(1 << 10)
+#define HW_IRQ_RST			(1 << 17)
+#define HW_IRQ_IPC			(1 << 30)
+
+
+// #define HW_GPIO_INTFLAG		0x0D8000F0
+// #define HW_GPIO_OWNER		0x0D8000FC
+
+// note to self: this interrupt will get fired A LOT
+
+void gpio_handler(void) {
+	uint32_t time_start = gettime();
+	uint32_t down = read32(HW_GPIO_IN) & (HW_GPIO_EJECT | HW_GPIO_POWER);
+
+	if (down == 0 || diff_msec(face_lastinput, time_start) < 200)
 		return;
+
+	if (down & HW_GPIO_EJECT) {
+		puts("pressed EJECT");
+		face_input = INPUT_EJECT;
+		face_lastinput = time_start;
+	}
+	else if (down & HW_GPIO_POWER) {
+		puts("pressed POWER");
+		face_input = INPUT_POWER;
+		face_lastinput = time_start;
+	}
+}
+
+void rst_handler(void) {
+	uint64_t time_start = gettime();
+
+	if (diff_msec(face_lastinput, time_start) < 200)
+		return;
+
+	while (SYS_ResetButtonDown()) {
+		uint64_t time_now = gettime();
+		if (diff_usec(time_start, time_now) >= 100) {
+			puts("pressed RESET");
+			face_input = INPUT_RESET;
+			face_lastinput = time_now;
+			break;
+		}
+	}
+}
+
+raw_irq_handler_t ipc_handler = NULL;
+void hollywood_irq_handler(uint32_t irq, void *ctx) {
+	uint32_t flag = read32(HW_PPCIRQFLAG);
+
+	if (flag & HW_IRQ_IPC) {
+		ipc_handler(irq, ctx);
 	}
 
-	stm_lastinput = now;
-	if (event == STM_EVENT_POWER)
-		stm_input = INPUT_POWER;
-	else if (event == STM_EVENT_RESET && SYS_ResetButtonDown())
-		stm_input = INPUT_RESET;
-	else
-		stm_input = 0;
-
-	// printf("event = %u stm_input = %x\n", event, stm_input);
+	if (flag & HW_IRQ_RST) {
+		write32(HW_PPCIRQFLAG, HW_IRQ_RST);
+		// printf("RST interrupt down=%i\n", SYS_ResetButtonDown());
+		rst_handler();
+	}
+/*
+	if (flag & HW_IRQ_GPIO) {
+		write32(HW_GPIO_INTFLAG, 0xFFFFFF);
+		write32(HW_PPCIRQFLAG, HW_IRQ_GPIO);
+		// printf("GPIOB interrupt flag=%08x mask=%08x in=%08x\n", read32(HW_GPIOB_INTFLAG), read32(HW_GPIOB_INTMASK), read32(HW_GPIOB_IN));
+		gpio_handler();
+	}
+*/
 }
+
+#endif /* 0 */
 #endif
 void input_init() {
 	if (input_initialized)
@@ -130,11 +187,7 @@ void input_init() {
 	USB_Initialize();
 	USBKeyboard_Initialize();
 	kbd_thread_should_run = true;
-	LWP_CreateThread(&kbd_thread_hndl, kbd_thread, 0, 0, 0x800, 0x7F);
-#endif
-
-#ifdef INPUT_USE_FACEBTNS
-	STM_RegisterEventHandler(STMEventHandler);
+	LWP_CreateThread(&kbd_thread_hndl, kbd_thread, 0, 0, 0x800, 0x60);
 #endif
 
 	input_initialized = 1;
@@ -225,19 +278,23 @@ uint32_t input_read(uint32_t mask) {
 #endif
 
 #ifdef INPUT_USE_FACEBTNS
-	if (stm_input) {
-		// printf("detected stm input\n");
-		if (diff_msec(stm_lastinput, gettime()) < 200)
-			button |= stm_input;
-		// else
-			// printf("stm input is too late");
+	uint64_t time_now = gettime();
+	static uint64_t last_input = 0;
+	if (!last_input || diff_msec(last_input, time_now) >= 200) {
+		if (SYS_ResetButtonDown()) {
+			button |= INPUT_RESET;
+			last_input = time_now;
+		}
 
-		stm_input = 0;
-	}
+		else if (read32(HW_GPIO_IN) & HW_GPIO_POWER) {
+			button |= INPUT_POWER;
+			last_input = time_now;
+		}
 
-	if (read32(HW_GPIO_IN) & EJECT_BTN /* pulse width limited */ && diff_msec(stm_lastinput, gettime()) >= 200) {
-		button |= INPUT_EJECT;
-		stm_lastinput = gettime();
+		else if (read32(HW_GPIO_IN) & HW_GPIO_EJECT) {
+			button |= INPUT_EJECT;
+			last_input = time_now;
+		}
 	}
 #endif
 

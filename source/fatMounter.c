@@ -8,6 +8,11 @@
 
 #include "fatMounter.h"
 
+#include <ogc/libversion.h>
+#if ((_V_MAJOR_ > 2) || (_V_MINOR_ > 11) || (_V_PATCH_ > 0))
+#pragma message "Me too :) add some cool colors please!!"
+#endif
+
 // static FATDevice* active = NULL;
 FATDevice devices[] = {
 	{ "Wii SD card slot",			"sd",	&__io_wiisd },

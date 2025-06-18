@@ -4,7 +4,11 @@
 .SUFFIXES:
 #---------------------------------------------------------------------------------
 ifeq ($(strip $(DEVKITPPC)),)
-$(error "Please set DEVKITPPC in your environment. export DEVKITPPC=<path to>devkitPPC")
+$(error "Please set DEVKITPPC in your environment. export DEVKITPPC=/path/to/devkitPPC")
+endif
+
+ifeq ($(strip $(DEVKITARM)),)
+$(error "Please set DEVKITARM in your environment. export DEVKITARM=/path/to/devkitARM")
 endif
 
 include $(DEVKITPPC)/wii_rules
@@ -156,8 +160,8 @@ $(OFILES_SOURCES) : $(HFILES)
 
 %.bin: %.arm
 	@echo $(notdir $<)
-	@arm-none-eabi-as -march=armv5t -EB $< -o $(@:.bin=.elf)
-	@arm-none-eabi-objcopy -O binary $(@:.bin=.elf) $@
+	@$(DEVKITARM)/bin/arm-none-eabi-as -march=armv5t -EB $< -o $(@:.bin=.elf)
+	@$(DEVKITARM)/bin/arm-none-eabi-objcopy -O binary $(@:.bin=.elf) $@
 
 -include $(DEPENDS)
 
