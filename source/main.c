@@ -469,12 +469,12 @@ int do_nand_backup()
 
 			// printf("% 3i%% [%.*s%*s]\r", (int)(prog * 100), r, thestring, barwidth - r, "");
 			printf("\x1b[26;0H");
-			printf("[ %4u / %4u ] \x1b[42;1m%*s\x1b[40m%*s\r", i + 1, n_blocks, r, "", barwidth - r, "");
+			printf("[ %4u / %4u ] \x1b[42;30m%*s\x1b[40m%*s\r", i + 1, n_blocks, r, "", barwidth - r, "");
 			printf("\x1b[26;48H");
 			if (i > 2193) {
-				printf("\x1b[42;30m%d\x1b[40m", (100*i)/n_blocks);
+				printf("\x1b[42;30m%d\x1b[40m\n", (100*i)/(n_blocks - 1));
 			} else {
-				printf("%d", (100*i)/n_blocks);
+				printf("%d\n", (100*i)/(n_blocks - 1));
 			}
 		}
 
@@ -495,8 +495,8 @@ int do_nand_backup()
 				uint8_t check_byte = ptr_page[(1 << nandsize.page_size) + nandsize.check_byte_ofs];
 				if ((ret == page_spare_sz || ret == -12) && check_byte != 0xFF) {
 					fprintf(logfile, "Block %u: Marked as bad\n", i);
-					if (!noERR) {
-						noERR = true; // Error flag
+					if (noERR) {
+						noERR = false; // Error flag
 					}
 					memset(ptr_block, 0, block_spare_sz);
 					break;
@@ -563,12 +563,12 @@ int do_nand_backup()
 #else
 			uint64_t time_now = gettime();
 			unsigned int time_diff = diff_sec(want_exit_time, time_now);
+			printf("\x1b[15;0H");
 			if ((time_diff - 1) <= 14) {
 				clearln();
 				puts("Cancelled by user.");
 				goto cancel_backup;
 			}
-
 			clearln();
 			puts("\x1b[30;1m(Press that again in 1-15s.)\x1b[39m"); // grey
 			want_exit_time = time_now;
@@ -612,7 +612,7 @@ int do_nand_backup()
 		}
 	}
 #endif
-
+	printf("\x1b[12;0H");
 	printf("Time elapsed: %.3fs\n", diff_msec(start, gettime()) / 1.0e+3);
 	if (!noERR) {
 		fprintf(logfile, "The dump was done without errors.\n");
