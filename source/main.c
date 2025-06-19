@@ -454,6 +454,7 @@ int do_nand_backup()
 	uint64_t start = gettime();
 	uint64_t lastupdate = 0;
 	puts("Press HOME/START/EJECT to stop.");
+	printf("\nIf the progress bar is stuck for more than 10 seconds, please restart your \n console.");
 	bool noERR = true;
 
 	for (unsigned int i = 0; i < n_blocks; i++) {
