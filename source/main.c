@@ -506,7 +506,6 @@ int do_nand_backup()
 			if (ret != page_spare_sz) {
 				switch (ret) {
 					case -11:
-						clearln();
 						fprintf(logfile, "Block %u: Corrected page %u\n", i, j);
 						if (noERR) {
 							noERR = false; // Error flag
@@ -614,7 +613,7 @@ int do_nand_backup()
 #endif
 	printf("\x1b[12;0H");
 	printf("Time elapsed: %.3fs\n", diff_msec(start, gettime()) / 1.0e+3);
-	if (!noERR) {
+	if (noERR) {
 		fprintf(logfile, "The dump was done without errors.\n");
 	}
 	fclose(logfile);
