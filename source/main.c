@@ -36,6 +36,7 @@
 #define _STR(X) #X
 #define STR(X) _STR(X)
 
+
 #include <ogc/libversion.h>
 #if ((_V_MAJOR_ > 2) || (_V_MINOR_ > 11) || (_V_PATCH_ > 0))
 #pragma message "Libogc updated(?). Please fix the console color printing"
@@ -129,6 +130,7 @@ static void print_thread(int i) {
  */
 
 char *logpath = "sd:/log.txt";
+FILE* logfile;
 
 static int threadid;
 int do_sha_exploit(const void* entry, bool thumb, void* sp, unsigned stack_size, uint32_t argument) {
@@ -452,8 +454,6 @@ int do_nand_backup()
 	uint64_t start = gettime();
 	uint64_t lastupdate = 0;
 	puts("Press HOME/START/EJECT to stop.");
-	FILE* logfile = fopen(logpath, "w+");
-	fprintf(logfile, "nanddumper@IOS By thepikachugamer\nLog file :\n");
 	bool noERR = true;
 
 	for (unsigned int i = 0; i < n_blocks; i++) {
@@ -839,7 +839,8 @@ int main(void) {
 		if (stat(paths[0], &st) < 0)
 			break;
 	}
-
+	logfile = fopen(logpath, "w+");
+	fprintf(logfile, "nanddumper@IOS By thepikachugamer\n(Currently running Abdelali221's mod)\nRunning on IOS %u\nLog file :\n", IOS_GetVersion());
 	puts("Start the NAND backup now?");
 	puts("Press HOME/START/EJECT to cancel. Press any other button to continue.\n");
 	usleep(1e+5);
@@ -854,10 +855,12 @@ int main(void) {
 	ret = do_nand_backup();
 #endif
 out:
+	fclose(logfile);
 	puts("Press any button to exit.");
 	input_wait(0);
 
 out_nowait:
+	fclose(logfile);
 #ifndef NANDDUMPER_READ_TEST
 	FATUnmount();
 #endif
