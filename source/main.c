@@ -720,7 +720,7 @@ int main(void) {
 #ifdef NANDDUMPER_READ_TEST
 	puts("\x1b[42mnanddumper@IOS " STR(NANDDUMPER_REVISION) " by thepikachugamer\x1b[40m");
 #else
-	puts("nanddumper@IOS " STR(NANDDUMPER_REVISION) " by thepikachugamer");
+	puts("nanddumper@IOS " STR(NANDDUMPER_REVISION) " by thepikachugamer\n Abdelali221's Mod.");
 #endif
 
 	load_startup_ios();
