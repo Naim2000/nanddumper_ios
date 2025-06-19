@@ -128,6 +128,8 @@ static void print_thread(int i) {
  * thank you mkwcat (<3)
  */
 
+char *logpath = "sd:/log.txt";
+
 static int threadid;
 int do_sha_exploit(const void* entry, bool thumb, void* sp, unsigned stack_size, uint32_t argument) {
 	const uint32_t* stage0 = (uint32_t *)stage0_bin;
@@ -450,6 +452,9 @@ int do_nand_backup()
 	uint64_t start = gettime();
 	uint64_t lastupdate = 0;
 	puts("Press HOME/START/EJECT to stop.");
+	FILE* logfile = fopen(logpath, "w+");
+	fprintf(logfile, "nanddumper@IOS By thepikachugamer\nLog file :\n");
+	bool noERR = true;
 
 	for (unsigned int i = 0; i < n_blocks; i++) {
 		unsigned char *ptr_block = buffer + ((i % buffer_cnt) * block_spare_sz);
@@ -459,27 +464,40 @@ int do_nand_backup()
 
 			// int barwidth = conX - (5 /* ___% */ + 2 /* [] */ + 1 /* to avoid new line lol */);
 			int barwidth = conX - ( 16 /* [ XXXX / XXXX ] */ + 1);
-			float prog = (i + 1) / (float)n_blocks;
+			float prog = i / (float)n_blocks;
 			int r = prog * barwidth;
 
 			// printf("% 3i%% [%.*s%*s]\r", (int)(prog * 100), r, thestring, barwidth - r, "");
+			printf("\x1b[26;0H");
 			printf("[ %4u / %4u ] \x1b[42;1m%*s\x1b[40m%*s\r", i + 1, n_blocks, r, "", barwidth - r, "");
+			printf("\x1b[26;48H");
+			if (i > 2193) {
+				printf("\x1b[42;30m%d\x1b[40m", (100*i)/n_blocks);
+			} else {
+				printf("%d", (100*i)/n_blocks);
+			}
 		}
-		// printf("\rBlock progress: [ %i/%i ] @ %.2fs   ", i + 1, n_blocks, diff_msec(start, gettime()) / 1.0e+3);
 
+		if (!noERR) {
+			printf("\x1b[10;0H");
+			printf("Please check the log file when done.");
+		}
+		
+		// printf("\rBlock progress: [ %i/%i ] @ %.2fs   ", i + 1, n_blocks, diff_msec(start, gettime()) / 1.0e+3);
 		for (unsigned int j = 0; j < (1 << pages_per_block); j++) {
 			unsigned char* ptr_page = ptr_block + (j * page_spare_sz);
 
 			IOS_Seek(fd, (i << pages_per_block) + j, SEEK_SET); // ret < 0 will not automatically advance the page for us
 			ret = IOS_Read(fd, ptr_page, page_spare_sz);
 
-
 			// FS checks this in the first 2 pages of a block
 			if (j < 2) {
 				uint8_t check_byte = ptr_page[(1 << nandsize.page_size) + nandsize.check_byte_ofs];
 				if ((ret == page_spare_sz || ret == -12) && check_byte != 0xFF) {
-					clearln();
-					printf("Block %u: Marked as bad\n", i);
+					fprintf(logfile, "Block %u: Marked as bad\n", i);
+					if (!noERR) {
+						noERR = true; // Error flag
+					}
 					memset(ptr_block, 0, block_spare_sz);
 					break;
 				}
@@ -489,25 +507,34 @@ int do_nand_backup()
 				switch (ret) {
 					case -11:
 						clearln();
-						printf("Block %u: Corrected page %u\n", i, j);
+						fprintf(logfile, "Block %u: Corrected page %u\n", i, j);
+						if (noERR) {
+							noERR = false; // Error flag
+						}
 						break;
 
 					case -12:
 						if (page_is_erased(ptr_page, &nandsize))
 							break;
 
-						clearln();
-						printf("Block %u: Uncorrectable page %u\n", i, j);
+						fprintf(logfile, "Block %u: Uncorrectable page %u\n", i, j);
+						if (noERR) {
+							noERR = false; // Error flag
+						}
 						break;
 
 					case -1:
-						clearln();
-						printf("NAND error (what? block %u, page %u)", i, j);
+						fprintf(logfile, "NAND error (what? block %u, page %u)\n", i, j);
+						if (noERR) {
+							noERR = false; // No Error flag
+						}
 						break;
 
 					default:
-						clearln();
-						printf("Unknown error %i (block %u, page %u)\n", ret, i, j);
+						fprintf(logfile, "Unknown error %i (block %u, page %u)\n", ret, i, j);
+						if (noERR) {
+							noERR = false; // Error flag
+						}
 						break;
 				}
 			}
@@ -587,7 +614,12 @@ int do_nand_backup()
 #endif
 
 	printf("Time elapsed: %.3fs\n", diff_msec(start, gettime()) / 1.0e+3);
+	if (!noERR) {
+		fprintf(logfile, "The dump was done without errors.\n");
+	}
+	fclose(logfile);
 out:
+	fclose(logfile);
 	IOS_Close(fd);
 	free(buffer);
 	return ret;
@@ -786,6 +818,7 @@ int main(void) {
 
 	char paths[2][128];
 	// ehh, why was i numbering the keys file // why was i dating it as well ....
+	sprintf(logpath, "%s:/log.txt", dev->name);
 	sprintf(paths[1], "%s:" BACKUP_DIR "/%s_keys.bin", dev->name, serial);
 	for (char *base = paths[1], *ptr = base; (ptr = strchr(ptr, '/')) != NULL; ptr++)
 	{
@@ -813,6 +846,7 @@ int main(void) {
 	if (input_wait(0) & (INPUT_START | INPUT_EJECT))
 		goto out_nowait;
 
+	printf("\x1b[2J");
 	printf("Saving to %s\n", paths[0]);
 
 	ret = do_nand_backup(paths[0], paths[1], comment);
