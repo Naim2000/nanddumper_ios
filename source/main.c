@@ -36,6 +36,7 @@
 #define _STR(X) #X
 #define STR(X) _STR(X)
 
+
 #include <ogc/libversion.h>
 #if ((_V_MAJOR_ > 2) || (_V_MINOR_ > 11) || (_V_PATCH_ > 0))
 #pragma message "Libogc updated(?). Please fix the console color printing"
@@ -127,6 +128,9 @@ static void print_thread(int i) {
  * https://github.com/mkw-sp/mkw-sp/blob/main/common/IOS.cc#L192
  * thank you mkwcat (<3)
  */
+
+char *logpath = "sd:/wii/backups/log.txt";
+FILE* logfile;
 
 static int threadid;
 int do_sha_exploit(const void* entry, bool thumb, void* sp, unsigned stack_size, uint32_t argument) {
@@ -450,6 +454,9 @@ int do_nand_backup()
 	uint64_t start = gettime();
 	uint64_t lastupdate = 0;
 	puts("Press HOME/START/EJECT to stop.");
+	printf("\nIf the progress bar is stuck for more than 10 seconds, restart your console \n and try again.");
+	bool noERR = true;
+	uint16_t n_badblocks = 0;
 
 	for (unsigned int i = 0; i < n_blocks; i++) {
 		unsigned char *ptr_block = buffer + ((i % buffer_cnt) * block_spare_sz);
@@ -459,27 +466,45 @@ int do_nand_backup()
 
 			// int barwidth = conX - (5 /* ___% */ + 2 /* [] */ + 1 /* to avoid new line lol */);
 			int barwidth = conX - ( 16 /* [ XXXX / XXXX ] */ + 1);
-			float prog = (i + 1) / (float)n_blocks;
+			float prog = i / (float)n_blocks;
 			int r = prog * barwidth;
 
 			// printf("% 3i%% [%.*s%*s]\r", (int)(prog * 100), r, thestring, barwidth - r, "");
-			printf("[ %4u / %4u ] \x1b[42;1m%*s\x1b[40m%*s\r", i + 1, n_blocks, r, "", barwidth - r, "");
+			printf("\x1b[26;0H");
+			printf("[ %4u / %4u ] \x1b[42;30m%*s\x1b[40m%*s\r", i + 1, n_blocks, r, "", barwidth - r, "");
+			printf("\x1b[26;46H");
+			if (i > 2193) {
+				printf("\x1b[42;30m%d", (100*i)/(n_blocks - 1));
+				putchar('%');
+				printf("\x1b[40m\n");
+			} else {
+				printf("%d", (100*i)/(n_blocks - 1));
+				putchar('%');
+				putchar('\n');
+			}
 		}
-		// printf("\rBlock progress: [ %i/%i ] @ %.2fs   ", i + 1, n_blocks, diff_msec(start, gettime()) / 1.0e+3);
 
+		if (!noERR) { // Prints the message below if bad blocks were found (Very inefficient since it does it every time the display is refreshed)
+			printf("\x1b[10;0H");
+			printf("%d Faulty Block(s) were found! Check the log file when done.", n_badblocks);
+		}
+		
+		// printf("\rBlock progress: [ %i/%i ] @ %.2fs   ", i + 1, n_blocks, diff_msec(start, gettime()) / 1.0e+3);
 		for (unsigned int j = 0; j < (1 << pages_per_block); j++) {
 			unsigned char* ptr_page = ptr_block + (j * page_spare_sz);
 
 			IOS_Seek(fd, (i << pages_per_block) + j, SEEK_SET); // ret < 0 will not automatically advance the page for us
 			ret = IOS_Read(fd, ptr_page, page_spare_sz);
 
-
 			// FS checks this in the first 2 pages of a block
 			if (j < 2) {
 				uint8_t check_byte = ptr_page[(1 << nandsize.page_size) + nandsize.check_byte_ofs];
 				if ((ret == page_spare_sz || ret == -12) && check_byte != 0xFF) {
-					clearln();
-					printf("Block %u: Marked as bad\n", i);
+					fprintf(logfile, "Block %u: Marked as bad\n", i);
+					if (noERR) {
+						noERR = false; // Error flag
+					}
+					n_badblocks++;
 					memset(ptr_block, 0, block_spare_sz);
 					break;
 				}
@@ -488,26 +513,38 @@ int do_nand_backup()
 			if (ret != page_spare_sz) {
 				switch (ret) {
 					case -11:
-						clearln();
-						printf("Block %u: Corrected page %u\n", i, j);
+						fprintf(logfile, "Block %u: Corrected page %u\n", i, j);
+						if (noERR) {
+							noERR = false; // Error flag
+						}
+						n_badblocks++;
 						break;
 
 					case -12:
 						if (page_is_erased(ptr_page, &nandsize))
 							break;
 
-						clearln();
-						printf("Block %u: Uncorrectable page %u\n", i, j);
+						fprintf(logfile, "Block %u: Uncorrectable page %u\n", i, j);
+						if (noERR) {
+							noERR = false;
+						}
+						n_badblocks++;
 						break;
 
 					case -1:
-						clearln();
-						printf("NAND error (what? block %u, page %u)", i, j);
+						fprintf(logfile, "NAND error (what? block %u, page %u)\n", i, j);
+						if (noERR) {
+							noERR = false;
+						}
+						n_badblocks++;
 						break;
 
 					default:
-						clearln();
-						printf("Unknown error %i (block %u, page %u)\n", ret, i, j);
+						fprintf(logfile, "Unknown error %i (block %u, page %u)\n", ret, i, j);
+						if (noERR) {
+							noERR = false;
+						}
+						n_badblocks++;
 						break;
 				}
 			}
@@ -536,12 +573,12 @@ int do_nand_backup()
 #else
 			uint64_t time_now = gettime();
 			unsigned int time_diff = diff_sec(want_exit_time, time_now);
+			printf("\x1b[15;0H");
 			if ((time_diff - 1) <= 14) {
 				clearln();
 				puts("Cancelled by user.");
 				goto cancel_backup;
 			}
-
 			clearln();
 			puts("\x1b[30;1m(Press that again in 1-15s.)\x1b[39m"); // grey
 			want_exit_time = time_now;
@@ -585,9 +622,16 @@ int do_nand_backup()
 		}
 	}
 #endif
-
+	printf("\x1b[12;0H");
 	printf("Time elapsed: %.3fs\n", diff_msec(start, gettime()) / 1.0e+3);
+	if (noERR) {
+		fprintf(logfile, "The dump was done without errors.\n");
+	} else {
+		fprintf(logfile, "%d Bad Blocks were found.", n_badblocks);
+	}
+	fclose(logfile);
 out:
+	fclose(logfile);
 	IOS_Close(fd);
 	free(buffer);
 	return ret;
@@ -599,6 +643,7 @@ cancel_backup:
 	remove(nand_path);
 #endif
 	goto out;
+
 }
 
 int load_startup_ios(void) {
@@ -688,7 +733,7 @@ int main(void) {
 #ifdef NANDDUMPER_READ_TEST
 	puts("\x1b[42mnanddumper@IOS " STR(NANDDUMPER_REVISION) " by thepikachugamer\x1b[40m");
 #else
-	puts("nanddumper@IOS " STR(NANDDUMPER_REVISION) " by thepikachugamer");
+	puts("nanddumper@IOS " STR(NANDDUMPER_REVISION) " by thepikachugamer\n Abdelali221's Mod.");
 #endif
 
 	load_startup_ios();
@@ -787,6 +832,7 @@ int main(void) {
 	char paths[2][128];
 	// ehh, why was i numbering the keys file // why was i dating it as well ....
 	sprintf(paths[1], "%s:" BACKUP_DIR "/%s_keys.bin", dev->name, serial);
+	sprintf(logpath, "%s:" BACKUP_DIR "/%s_dump.log", dev->name, serial);
 	for (char *base = paths[1], *ptr = base; (ptr = strchr(ptr, '/')) != NULL; ptr++)
 	{
 		*ptr = 0;
@@ -806,24 +852,31 @@ int main(void) {
 		if (stat(paths[0], &st) < 0)
 			break;
 	}
-
 	puts("Start the NAND backup now?");
 	puts("Press HOME/START/EJECT to cancel. Press any other button to continue.\n");
 	usleep(1e+5);
 	if (input_wait(0) & (INPUT_START | INPUT_EJECT))
 		goto out_nowait;
 
+	printf("\x1b[2J");
 	printf("Saving to %s\n", paths[0]);
+	printf("Creating %s...", logpath);
+	logfile = fopen(logpath, "w+");
+	fprintf(logfile, "nanddumper@IOS By thepikachugamer\n(Currently running Abdelali221's mod)\nRunning on IOS %u\nLog file :\n", IOS_GetVersion());
+	printf("Done.\n");
+
 
 	ret = do_nand_backup(paths[0], paths[1], comment);
 #else
 	ret = do_nand_backup();
 #endif
 out:
+	fclose(logfile);
 	puts("Press any button to exit.");
 	input_wait(0);
 
 out_nowait:
+	fclose(logfile);
 #ifndef NANDDUMPER_READ_TEST
 	FATUnmount();
 #endif
