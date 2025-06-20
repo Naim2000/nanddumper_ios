@@ -484,7 +484,7 @@ int do_nand_backup()
 			}
 		}
 
-		if (!noERR) {
+		if (!noERR) { // Prints the message below if bad blocks were found (Very inefficient since it does it every time the display is refreshed)
 			printf("\x1b[10;0H");
 			printf("%d Faulty Block(s) were found! Check the log file when done.", n_badblocks);
 		}
@@ -526,7 +526,7 @@ int do_nand_backup()
 
 						fprintf(logfile, "Block %u: Uncorrectable page %u\n", i, j);
 						if (noERR) {
-							noERR = false; // Error flag
+							noERR = false;
 						}
 						n_badblocks++;
 						break;
@@ -534,7 +534,7 @@ int do_nand_backup()
 					case -1:
 						fprintf(logfile, "NAND error (what? block %u, page %u)\n", i, j);
 						if (noERR) {
-							noERR = false; // No Error flag
+							noERR = false;
 						}
 						n_badblocks++;
 						break;
@@ -542,7 +542,7 @@ int do_nand_backup()
 					default:
 						fprintf(logfile, "Unknown error %i (block %u, page %u)\n", ret, i, j);
 						if (noERR) {
-							noERR = false; // Error flag
+							noERR = false;
 						}
 						n_badblocks++;
 						break;
@@ -643,6 +643,7 @@ cancel_backup:
 	remove(nand_path);
 #endif
 	goto out;
+
 }
 
 int load_startup_ios(void) {
