@@ -129,7 +129,7 @@ static void print_thread(int i) {
  * thank you mkwcat (<3)
  */
 
-char *logpath;
+char *logpath = "sd:/wii/backups/log.txt";
 FILE* logfile;
 
 static int threadid;
@@ -830,7 +830,6 @@ int main(void) {
 
 	char paths[2][128];
 	// ehh, why was i numbering the keys file // why was i dating it as well ....
-	sprintf(logpath, "%s:" BACKUP_DIR "/%s_dump.log", dev->name, serial);
 	sprintf(paths[1], "%s:" BACKUP_DIR "/%s_keys.bin", dev->name, serial);
 	for (char *base = paths[1], *ptr = base; (ptr = strchr(ptr, '/')) != NULL; ptr++)
 	{
@@ -851,6 +850,7 @@ int main(void) {
 		if (stat(paths[0], &st) < 0)
 			break;
 	}
+	sprintf(logpath, "%s:" BACKUP_DIR "/%s_dump.log", dev->name, serial);
 	logfile = fopen(logpath, "w+");
 	fprintf(logfile, "nanddumper@IOS By thepikachugamer\n(Currently running Abdelali221's mod)\nRunning on IOS %u\nLog file :\n", IOS_GetVersion());
 	puts("Start the NAND backup now?");
