@@ -454,7 +454,7 @@ int do_nand_backup()
 	uint64_t start = gettime();
 	uint64_t lastupdate = 0;
 	puts("Press HOME/START/EJECT to stop.");
-	printf("\nIf the progress bar is stuck for more than 10 seconds, please restart your \n console.");
+	printf("\nIf the progress bar is stuck for more than 10 seconds, restart your console \n and try again.");
 	bool noERR = true;
 	uint16_t n_badblocks = 0;
 
@@ -831,6 +831,7 @@ int main(void) {
 	char paths[2][128];
 	// ehh, why was i numbering the keys file // why was i dating it as well ....
 	sprintf(paths[1], "%s:" BACKUP_DIR "/%s_keys.bin", dev->name, serial);
+	sprintf(logpath, "%s:" BACKUP_DIR "/%s_dump.log", dev->name, serial);
 	for (char *base = paths[1], *ptr = base; (ptr = strchr(ptr, '/')) != NULL; ptr++)
 	{
 		*ptr = 0;
@@ -850,9 +851,6 @@ int main(void) {
 		if (stat(paths[0], &st) < 0)
 			break;
 	}
-	sprintf(logpath, "%s:" BACKUP_DIR "/%s_dump.log", dev->name, serial);
-	logfile = fopen(logpath, "w+");
-	fprintf(logfile, "nanddumper@IOS By thepikachugamer\n(Currently running Abdelali221's mod)\nRunning on IOS %u\nLog file :\n", IOS_GetVersion());
 	puts("Start the NAND backup now?");
 	puts("Press HOME/START/EJECT to cancel. Press any other button to continue.\n");
 	usleep(1e+5);
@@ -861,6 +859,11 @@ int main(void) {
 
 	printf("\x1b[2J");
 	printf("Saving to %s\n", paths[0]);
+	printf("Creating %s...", logpath);
+	logfile = fopen(logpath, "w+");
+	fprintf(logfile, "nanddumper@IOS By thepikachugamer\n(Currently running Abdelali221's mod)\nRunning on IOS %u\nLog file :\n", IOS_GetVersion());
+	printf("Done.\n");
+
 
 	ret = do_nand_backup(paths[0], paths[1], comment);
 #else
