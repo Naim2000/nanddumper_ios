@@ -129,7 +129,7 @@ static void print_thread(int i) {
  * thank you mkwcat (<3)
  */
 
-char *logpath = "sd:/log.txt";
+char *logpath;
 FILE* logfile;
 
 static int threadid;
@@ -456,6 +456,7 @@ int do_nand_backup()
 	puts("Press HOME/START/EJECT to stop.");
 	printf("\nIf the progress bar is stuck for more than 10 seconds, please restart your \n console.");
 	bool noERR = true;
+	uint16_t n_badblocks = 0;
 
 	for (unsigned int i = 0; i < n_blocks; i++) {
 		unsigned char *ptr_block = buffer + ((i % buffer_cnt) * block_spare_sz);
@@ -471,17 +472,21 @@ int do_nand_backup()
 			// printf("% 3i%% [%.*s%*s]\r", (int)(prog * 100), r, thestring, barwidth - r, "");
 			printf("\x1b[26;0H");
 			printf("[ %4u / %4u ] \x1b[42;30m%*s\x1b[40m%*s\r", i + 1, n_blocks, r, "", barwidth - r, "");
-			printf("\x1b[26;48H");
+			printf("\x1b[26;46H");
 			if (i > 2193) {
-				printf("\x1b[42;30m%d\x1b[40m\n", (100*i)/(n_blocks - 1));
+				printf("\x1b[42;30m%d", (100*i)/(n_blocks - 1));
+				putchar('%');
+				printf("\x1b[40m\n");
 			} else {
-				printf("%d\n", (100*i)/(n_blocks - 1));
+				printf("%d", (100*i)/(n_blocks - 1));
+				putchar('%');
+				putchar('\n');
 			}
 		}
 
 		if (!noERR) {
 			printf("\x1b[10;0H");
-			printf("Please check the log file when done.");
+			printf("%d Faulty Block(s) were found! Check the log file when done.", n_badblocks);
 		}
 		
 		// printf("\rBlock progress: [ %i/%i ] @ %.2fs   ", i + 1, n_blocks, diff_msec(start, gettime()) / 1.0e+3);
@@ -499,6 +504,7 @@ int do_nand_backup()
 					if (noERR) {
 						noERR = false; // Error flag
 					}
+					n_badblocks++;
 					memset(ptr_block, 0, block_spare_sz);
 					break;
 				}
@@ -511,6 +517,7 @@ int do_nand_backup()
 						if (noERR) {
 							noERR = false; // Error flag
 						}
+						n_badblocks++;
 						break;
 
 					case -12:
@@ -521,6 +528,7 @@ int do_nand_backup()
 						if (noERR) {
 							noERR = false; // Error flag
 						}
+						n_badblocks++;
 						break;
 
 					case -1:
@@ -528,6 +536,7 @@ int do_nand_backup()
 						if (noERR) {
 							noERR = false; // No Error flag
 						}
+						n_badblocks++;
 						break;
 
 					default:
@@ -535,6 +544,7 @@ int do_nand_backup()
 						if (noERR) {
 							noERR = false; // Error flag
 						}
+						n_badblocks++;
 						break;
 				}
 			}
@@ -616,6 +626,8 @@ int do_nand_backup()
 	printf("Time elapsed: %.3fs\n", diff_msec(start, gettime()) / 1.0e+3);
 	if (noERR) {
 		fprintf(logfile, "The dump was done without errors.\n");
+	} else {
+		fprintf(logfile, "%d Bad Blocks were found.", n_badblocks);
 	}
 	fclose(logfile);
 out:
@@ -818,7 +830,7 @@ int main(void) {
 
 	char paths[2][128];
 	// ehh, why was i numbering the keys file // why was i dating it as well ....
-	sprintf(logpath, "%s:/log.txt", dev->name);
+	sprintf(logpath, "%s:" BACKUP_DIR "/%s_dump.log", dev->name, serial);
 	sprintf(paths[1], "%s:" BACKUP_DIR "/%s_keys.bin", dev->name, serial);
 	for (char *base = paths[1], *ptr = base; (ptr = strchr(ptr, '/')) != NULL; ptr++)
 	{
