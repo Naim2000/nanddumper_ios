@@ -455,7 +455,7 @@ int do_nand_backup()
 	fprintf(logfile, "nanddumper@IOS By thepikachugamer\n\nRunning on IOS %u\n\nDump Log :\n", IOS_GetVersion());
 	printf("Done.\n");
 	puts("Press HOME/START/EJECT to stop.");
-	printf("\nIf the progress bar is stuck for more than 10 seconds, restart your console \n and try again.");
+	printf("\nIf the progress bar is stuck for more than 10 seconds, restart your console \n and try again (Please report that by creating an issue in the Github Repository).");
 
 	for (unsigned int i = 0; i < n_blocks; i++) {
 		unsigned char *ptr_block = buffer + ((i % buffer_cnt) * block_spare_sz);
@@ -560,7 +560,7 @@ int do_nand_backup()
 				goto cancel_backup;
 			}
 			clearln();
-			puts("\x1b[30;1m(Press that again in 1-15s.)\x1b[39m\n"); // grey
+			puts("\x1b[30;1m(Press that again in 1-15s.)\x1b[39m"); // grey
 			want_exit_time = time_now;
 #endif
 		}
