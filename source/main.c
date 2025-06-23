@@ -473,12 +473,9 @@ int do_nand_backup()
 			printf("[ %4u / %4u ] \x1b[42;30m%*s\x1b[40m%*s\r", i + 1, n_blocks, r, "", barwidth - r, "");
 			printf("\x1b[27;46H");
 			if (i > 2193) {
-				printf("\x1b[42;30m%d", (100*i)/(n_blocks - 1));
-				putchar('%');
-				printf("\x1b[40m");
+				printf("\x1b[42;30m%c%d\x1b[40m", '%', (100*i)/(n_blocks - 1));
 			} else {
-				printf("%d", (100*i)/(n_blocks - 1));
-				putchar('%');
+				printf("%c%d", '%', (100*i)/(n_blocks - 1));
 			}
 		}
 
