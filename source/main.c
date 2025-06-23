@@ -560,7 +560,7 @@ int do_nand_backup()
 				goto cancel_backup;
 			}
 			clearln();
-			puts("\x1b[30;1m(Press that again in 1-15s.)\x1b[39m"); // grey
+			puts("\x1b[30;1m(Press that again in 1-15s.)\x1b[39m\n"); // grey
 			want_exit_time = time_now;
 #endif
 		}
