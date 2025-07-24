@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <ogc/console.h>
 #include <unistd.h>
 #include <errno.h>
 #include <fat.h>
@@ -7,11 +8,6 @@
 #include <ogc/usbstorage.h>
 
 #include "fatMounter.h"
-
-#include <ogc/libversion.h>
-#if ((_V_MAJOR_ > 2) || (_V_MINOR_ > 11) || (_V_PATCH_ > 0))
-#pragma message "Me too :) add some cool colors please!!"
-#endif
 
 // static FATDevice* active = NULL;
 FATDevice devices[] = {
@@ -35,10 +31,13 @@ bool FATMount(FATDevice** preferred) {
 				dev->state = 1;
 				*preferred = dev;
 				i++;
+				// puts(CONSOLE_GREEN "OK!" CONSOLE_RESET); // This looks awful on a thin font. damn.
 				puts("OK!");
 			}
 			else {
+				// puts(CONSOLE_RED "Failed!" CONSOLE_RESET);
 				puts("Failed!");
+
 				dev->disk->shutdown();
 			}
 		}
@@ -46,7 +45,7 @@ bool FATMount(FATDevice** preferred) {
 	}
 
 	if (i == 0) {
-		puts("\x1b[30;1m[-] No storage devices are attached...\x1b[39m");
+		puts(CONSOLE_ESC(37;2m) "[-] No storage devices are attached..." CONSOLE_RESET);
 		return false;
 	}
 	else if (i == 1) {

@@ -29,10 +29,10 @@ REVISION	:=	$(shell git describe --tags --abbrev=8 --dirty | sed 's/-[0-9]*-g/-/
 # options for code generation
 #---------------------------------------------------------------------------------
 
-CFLAGS	= -g -O2 -Wall $(MACHDEP) $(INCLUDE) -D_GNU_SOURCE -DNANDDUMPER_REVISION=$(REVISION)
+CFLAGS		= -g -O2 -Wall $(MACHDEP) $(INCLUDE) -D_GNU_SOURCE -DNANDDUMPER_REVISION=$(REVISION)
 CXXFLAGS	=	$(CFLAGS)
 
-LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
+LDFLAGS		=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
@@ -77,8 +77,7 @@ CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 sFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.S)))
-ARMFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.arm)))
-BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*))) $(ARMFILES:.arm=.bin)
+BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 #---------------------------------------------------------------------------------
 # use CXX for linking C++ projects, CC for standard C
 #---------------------------------------------------------------------------------
@@ -112,12 +111,14 @@ export OUTPUT	:=	$(CURDIR)/$(TARGET)
 
 #---------------------------------------------------------------------------------
 $(BUILD):
+	@$(foreach x, source/stage0 source/stage1 source/realcode, $(MAKE) --no-print-directory -C $(x); cp -u $(x)/$(notdir $(x)).bin $(CURDIR)/data/$(notdir $(x).bin);)
 	@[ -d $@ ] || mkdir -p $@
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
+	@$(foreach x, source/stage0 source/stage1 source/realcode, $(MAKE) --no-print-directory -C $(x) clean;)
 	@rm -fr $(BUILD) $(OUTPUT).elf $(OUTPUT).dol
 
 #---------------------------------------------------------------------------------
@@ -157,11 +158,6 @@ $(OFILES_SOURCES) : $(HFILES)
 #---------------------------------------------------------------------------------
 	@echo $(notdir $<)
 	$(bin2o)
-
-%.bin: %.arm
-	@echo $(notdir $<)
-	@$(DEVKITARM)/bin/arm-none-eabi-as -march=armv5t -EB $< -o $(@:.bin=.elf)
-	@$(DEVKITARM)/bin/arm-none-eabi-objcopy -O binary $(@:.bin=.elf) $@
 
 -include $(DEPENDS)
 

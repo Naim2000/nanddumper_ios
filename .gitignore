@@ -1,5 +1,6 @@
 .vscode/
 build
+build_*
 *.dol
 *.elf
 *.zip

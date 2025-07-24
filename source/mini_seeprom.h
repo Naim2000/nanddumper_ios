@@ -10,6 +10,7 @@ Copyright (C) 2008, 2009    Sven Peter <svenpeter@gmail.com>
 
 #ifndef __MINI_SEEPROM_H__
 #define __MINI_SEEPROM_H__
+#include <gctypes.h>
 
 #define SEEPROM_SIZE    0x100
 
