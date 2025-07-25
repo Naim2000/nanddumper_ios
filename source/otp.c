@@ -8,7 +8,7 @@ static volatile struct OTPRegister {
 		uint32_t Command;
 		struct {
 			uint32_t Read : 1;
-			uint32_t : 24;
+			uint32_t : 26;
 			uint32_t Address : 5;
 		};
 	};
