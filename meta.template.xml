@@ -26,7 +26,7 @@ Discovered /dev/sha exploit in it's entirety. Did you say INSTANT ACE that works
 Voluntary graphics designer (again!? See cdbackup icon)
 
 { bushing, DarkMatterCore, InvoxiPlayGames }
-Creator of xyzzy and xyzzy-mod respectively (SEEPROM code. vWii SRAM-OTP code by InvoxiPlayGames.)
+Creator of xyzzy and xyzzy-mod respectively.
 
 R.I.P. Bushing. Keep hacking?
 [ Abort ] [ Retry ] [ Cancel ] &gt;[ Continue ]&lt;
@@ -36,7 +36,7 @@ Tester (USB flash drives). Excellent at spreading positive energy. Also creator 
 
 { DeadlyFoez }
 Tester (tons of older/not-so standard IOS). See beta3 changelog.
-(0x00F66403, 0x00040003)
+The forbidden IOSes: 0x00F66403, 0x00040003
 
 [ nickle241 ]
 Tester (128M "dev" IOS). No Homebrew Channel was installed in the process of dumping this devkit(?) NAND. :D
