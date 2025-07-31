@@ -427,7 +427,7 @@ int main(void) {
 		"nanddumper@IOS by thepikachugamer\n"
 
 		"Console model: %s [%s]\n"
-		"Console ID:    %08x\n"
+		"Console ID: %08x\n"
 		"Serial number: %s\n\n"
 
 		"thank you mkwcat <3", type, model, device_id, serial);

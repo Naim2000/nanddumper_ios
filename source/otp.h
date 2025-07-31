@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include "common.h"
 
 #define OTP_WORD_COUNT 32
 
@@ -20,5 +21,6 @@ typedef union {
 	};
 	uint32_t data[OTP_WORD_COUNT];
 } WiiOTP;
+CHECK_STRUCT_SIZE(WiiOTP, 0x80);
 
 int otp_read(unsigned offset, unsigned count, uint32_t out[count]);
